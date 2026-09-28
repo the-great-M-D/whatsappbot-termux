@@ -1,0 +1,61 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# TypeScript / build
+dist/
+build/
+*.tsbuildinfo
+
+# WhatsApp authentication
+whatsapp-auth/
+whatsapp-auth-backups/
+auth/
+auth_info/
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Bot runtime data
+discord/
+data/
+logs/
+*.log
+
+# Scanner / generated runtime files
+scanner-matches.jsonl
+decrypt-logs.jsonl
+hat-tmp/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Termux / local files
+*.local
+
+# Private/local scripts — never track
+scripts/
+
+# Local source backups
+src/**/*.bak
+src/**/*.backup*
+
+# Local source backups
+src/**/*.bak
+src/**/*.backup*
