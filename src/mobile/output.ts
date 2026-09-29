@@ -22,7 +22,7 @@ export function box(
     `${icon}${title}`,
     '━━━━━━━━━━━━━━━━',
     ...lines,
-  ].join('\\n');
+  ].join('\n');
 }
 
 export function success(
