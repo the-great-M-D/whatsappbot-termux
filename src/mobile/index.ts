@@ -1612,33 +1612,44 @@ async function connect() {
                 continue;
               }
 
-              const decrypted =
-                await decryptHatFromMessage(
-                  currentSock,
-                  M,
-                );
+              const hat =
+                findHatDocument(M.message) ||
+                findQuotedHatDocument(M.message);
 
-              logDecrypt(
-                'decrypt',
-                M.key.remoteJid || '',
-                M.key.participant ||
-                  M.key.remoteJid ||
-                  '',
-                !!decrypted,
-              );
+              const hc =
+                findHcDocument(M.message) ||
+                findQuotedHcDocument(M.message);
+
+              let decrypted = false;
+
+              if (hat) {
+                decrypted = await decryptHatFromMessage(currentSock, M);
+                logDecrypt(
+                  'decrypt-hat',
+                  M.key.remoteJid || '',
+                  M.key.participant || M.key.remoteJid || '',
+                  decrypted,
+                );
+              } else if (hc) {
+                decrypted = await decryptHcFromMessage(currentSock, M);
+                logDecrypt(
+                  'decrypt-hc',
+                  M.key.remoteJid || '',
+                  M.key.participant || M.key.remoteJid || '',
+                  decrypted,
+                );
+              }
 
               if (!decrypted) {
                 await commandReply({
-                  
-                    text: error(
-                      '🔐 HAT DECRYPT',
-                      [
-                        'No .hat document found.',
-                        `Reply to a .hat file with ${config.prefix}decrypt.`,
-                      ],
-                    ),
-                  },
-                );
+                  text: error(
+                    '🔐 DECRYPT',
+                    [
+                      'No .hat or .hc document found.',
+                      `Reply to a .hat or .hc file with ${config.prefix}decrypt.`,
+                    ],
+                  ),
+                });
               }
 
               continue;
