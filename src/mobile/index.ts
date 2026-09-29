@@ -1464,6 +1464,10 @@ async function connect() {
 
             /*
              * Discord bridge.
+             *
+             * Forward normal messages and WhatsApp replies.
+             * When the incoming message is a reply, include the
+             * quoted message so Discord receives the context too.
              */
             if (
               !M.key.fromMe &&
@@ -1472,13 +1476,29 @@ async function connect() {
                 config.discordTarget
             ) {
               try {
+                const quoted =
+                  message.extendedTextMessage?.contextInfo
+                    ?.quotedMessage;
+
+                const quotedText =
+                  quoted?.conversation ||
+                  quoted?.extendedTextMessage?.text ||
+                  quoted?.imageMessage?.caption ||
+                  quoted?.videoMessage?.caption ||
+                  '';
+
+                const discordText =
+                  quotedText.trim()
+                    ? `↩️ Reply to: ${quotedText.slice(0, 700)}\\n${text}`
+                    : text;
+
                 await discord.fromWA(
                   M.key.participant ||
                     M.key.remoteJid ||
                     '',
                   M.pushName ||
                     'Unknown',
-                  text,
+                  discordText,
                 );
               } catch (error) {
                 await reportError(
