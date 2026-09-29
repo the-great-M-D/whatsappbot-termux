@@ -19,8 +19,24 @@ function senderJid(M: any): string {
   );
 }
 
-function isGroupMessage(M: any): boolean {
-  return chatJid(M).endsWith('@g.us');
+function identityVariants(value: unknown): string[] {
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+
+  const out = new Set<string>();
+  out.add(raw);
+
+  const number = raw
+    .split('@')[0]
+    .split(':')[0]
+    .replace(/[^0-9]/g, '');
+
+  if (number) {
+    out.add(number);
+    out.add(number + '@s.whatsapp.net');
+  }
+
+  return [...out];
 }
 
 export function target(M: any): string {
@@ -33,11 +49,38 @@ export function target(M: any): string {
 }
 
 export function isAdmin(meta: GroupMetadata, jid: string) {
-  return meta.participants.some(
-    (p: any) =>
-      p.id === jid &&
-      (p.admin === 'admin' || p.admin === 'superadmin'),
-  );
+  const senderIds = new Set(identityVariants(jid));
+
+  return meta.participants.some((p: any) => {
+    if (
+      p.admin !== 'admin' &&
+      p.admin !== 'superadmin'
+    ) {
+      return false;
+    }
+
+    const participantIds = [
+      p.id,
+      p.lid,
+      p.phoneNumber,
+      p.jid,
+    ].flatMap(identityVariants);
+
+    const matched = participantIds.some(id => senderIds.has(id));
+
+    if (matched) {
+      console.log(
+        '[MOD] admin match:',
+        jid,
+        '=>',
+        p.id,
+        p.lid || '',
+        p.phoneNumber || '',
+      );
+    }
+
+    return matched;
+  });
 }
 
 export async function moderate(
@@ -48,8 +91,6 @@ export async function moderate(
 ) {
   const chat = chatJid(M);
 
-  // Baileys does not guarantee a custom M.isGroup property.
-  // Detect groups from the WhatsApp JID instead.
   if (!chat.endsWith('@g.us')) {
     return void M.reply('Group only.');
   }
@@ -58,12 +99,25 @@ export async function moderate(
   const sender = senderJid(M);
 
   if (!isAdmin(meta, sender)) {
+    console.log(
+      '[MOD] admin check failed:',
+      'sender=', sender,
+      'group=', chat,
+      'admins=',
+      meta.participants
+        .filter((p: any) => p.admin === 'admin' || p.admin === 'superadmin')
+        .map((p: any) => ({
+          id: p.id,
+          lid: p.lid || '',
+          phoneNumber: p.phoneNumber || '',
+          admin: p.admin,
+        })),
+    );
+
     return void M.reply('Admin only.');
   }
 
-  const bot = sock.user?.id
-    ? sock.user.id.split(':')[0].split('@')[0] + '@s.whatsapp.net'
-    : '';
+  const bot = sock.user?.id || '';
 
   if (!isAdmin(meta, bot)) {
     return void M.reply('M_D TOOL must be a group admin.');
