@@ -176,6 +176,8 @@ scripts/
 
 ## Commands
 
+All commands are owner-only. Messages from non-owners are ignored silently.
+
 ### General
 
 ```
@@ -256,7 +258,7 @@ Read `scripts/README.txt` for the full workflow.
 
 ## Group moderation
 
-Moderation commands require the sender to be a group admin and the bot to be a group admin.
+Moderation commands are owner-only and additionally require the sender and the bot to be group admins.
 
 Target a member by replying to their message or mentioning them.
 

@@ -1459,7 +1459,21 @@ async function connect() {
 
             const args = parts;
 
-
+            /*
+             * Every command is owner-only.
+             * Non-owners are ignored silently, so the
+             * bot does not reveal that it exists to
+             * people who type !commands.
+             */
+            if (
+              !isOwner(
+                M.key.participant ||
+                  M.key.remoteJid ||
+                  '',
+              )
+            ) {
+              continue;
+            }
 
             /*
              * !hi
