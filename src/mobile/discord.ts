@@ -13,12 +13,37 @@ export type DiscordScannerMatch = {
 
 export class DiscordBridge {
   client: Client | null = null;
+  private readyPromise: Promise<void> | null = null;
+  private readyResolve: (() => void) | null = null;
+
   constructor(private sendWA: (jid: string, text: string) => Promise<void>) {}
+
+  private async waitUntilReady(timeoutMs = 15000): Promise<boolean> {
+    if (this.client?.isReady()) return true;
+    if (!this.readyPromise) return false;
+
+    await Promise.race([
+      this.readyPromise,
+      new Promise<void>(resolve => setTimeout(resolve, timeoutMs)),
+    ]);
+
+    return this.client?.isReady() === true;
+  }
+
   async start() {
     if (!config.discordToken) return console.log('[DISCORD] disabled (no DISCORD_TOKEN)');
     if (this.client) return;
     this.client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
-    this.client.on('ready', () => console.log('[DISCORD] connected'));
+
+    this.readyPromise = new Promise<void>(resolve => {
+      this.readyResolve = resolve;
+    });
+
+    this.client.on('ready', () => {
+      console.log('[DISCORD] connected');
+      this.readyResolve?.();
+      this.readyResolve = null;
+    });
     this.client.on('messageCreate', async (m: Message) => {
       try {
         if (m.author.bot || m.channelId !== config.discordChannelId || !m.content.startsWith(config.prefix)) return;
@@ -37,6 +62,14 @@ export class DiscordBridge {
   }
   async scanner(matches: DiscordScannerMatch[]) {
     if (!matches.length || !this.client || !config.discordChannelId) return;
+
+    if (!this.client.isReady()) {
+      const ready = await this.waitUntilReady();
+      if (!ready) {
+        console.error('[DISCORD] scanner skipped: Discord client is not ready.');
+        return;
+      }
+    }
 
     const ch = await this.client.channels.fetch(config.discordChannelId);
     if (!ch || !ch.isTextBased() || !('send' in ch)) return;
@@ -71,6 +104,15 @@ export class DiscordBridge {
 
   async fromWA(sender: string, name: string, text: string) {
     if (!this.client || !config.discordChannelId || (config.discordTarget && sender === '')) return;
+
+    if (!this.client.isReady()) {
+      const ready = await this.waitUntilReady();
+      if (!ready) {
+        console.error('[DISCORD] WhatsApp forward skipped: Discord client is not ready.');
+        return;
+      }
+    }
+
     const ch = await this.client.channels.fetch(config.discordChannelId);
     if (!ch || !ch.isTextBased() || !('send' in ch)) return;
     await ch.send('[WhatsApp] ' + name + ': ' + text);
