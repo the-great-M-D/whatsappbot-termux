@@ -22,8 +22,15 @@ export class DiscordBridge {
   private readyPromise: Promise<void> | null = null;
   private readyResolve: (() => void) | null = null;
   private lastWaCommandText = '';
+  private readonly outboundMessageIds = new Set<string>();
 
-  constructor(private sendWA: (jid: string, text: string) => Promise<void>) {}
+  private rememberOutboundMessage(id: string | undefined) {
+    if (!id) return;
+    this.outboundMessageIds.add(id);
+    setTimeout(() => this.outboundMessageIds.delete(id), 60_000);
+  }
+
+  constructor(private sendWA: (jid: string, text: string) => Promise<{ key?: { id?: string } } | void>) {}
 
   private async waitUntilReady(timeoutMs = 15000): Promise<boolean> {
     if (this.client?.isReady()) return true;
@@ -126,15 +133,16 @@ export class DiscordBridge {
 
         // Send only the command text to WhatsApp.
         // The Discord username is kept in history, not injected into the WA message.
-        await this.sendWA(
+        const sent = await this.sendWA(
           config.discordTarget,
           text,
         );
 
+        this.lastWaCommandText = text;
+        this.rememberOutboundMessage(sent?.key?.id);
+
         // Suppress only the outbound command echo. Bot replies such as
         // !help output are allowed through to Discord.
-        this.lastWaCommandText = text;
-
         appendHistory({
           ts: Date.now(),
           direction: 'discord',
@@ -212,13 +220,19 @@ export class DiscordBridge {
     dlog(chalk.magenta('SCANNER OK'), 'sent');
   }
 
-  async fromWA(sender: string, name: string, text: string) {
+  async fromWA(sender: string, name: string, text: string, messageId?: string, fromMe = false) {
     // Do not echo messages sent by the WhatsApp bot itself back into Discord.
     // This prevents !wa from producing a Discord command + webhook echo pair.
     const botNumber = digits(config.phone);
     const senderNumber = digits(sender);
 
-    if (botNumber && senderNumber && botNumber === senderNumber) {
+    if (fromMe && messageId && this.outboundMessageIds.has(messageId)) {
+      this.outboundMessageIds.delete(messageId);
+      console.log(chalk.gray('[DISCORD]'), chalk.bold('SUPPRESSED'), chalk.gray(`outbound WA message ${messageId}`));
+      return;
+    }
+
+    if (fromMe && botNumber && senderNumber && botNumber === senderNumber) {
       if (text.trim() === this.lastWaCommandText.trim()) {
         console.log(chalk.gray('[DISCORD]'), chalk.bold('SUPPRESSED'), chalk.gray('outbound !wa echo'));
         this.lastWaCommandText = '';
