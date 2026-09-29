@@ -468,6 +468,29 @@ async function runHatDecrypt(
   });
 }
 
+async function runHcDecrypt(inputFile: string, outputFile: string): Promise<{ ok: boolean; output: string }> {
+  return await new Promise(resolve => {
+    const script = path.resolve(process.cwd(), 'scripts', 'hc_tool.py');
+    const child = spawn('python', [script, 'decrypt', inputFile, outputFile], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', data => { stdout += data.toString(); });
+    child.stderr.on('data', data => { stderr += data.toString(); });
+    child.on('error', error => resolve({ ok: false, output: errorText(error) }));
+    child.on('close', code => {
+      if (code !== 0) {
+        resolve({ ok: false, output: stderr.trim() || stdout.trim() || `HC decrypt exited with code ${code}` });
+        return;
+      }
+      try {
+        resolve({ ok: true, output: fs.readFileSync(outputFile, 'utf8') });
+      } catch (error) {
+        resolve({ ok: false, output: errorText(error) });
+      }
+    });
+  });
+}
+
 function findHatDocument(message: any): any | null {
   if (
     message?.documentMessage &&
@@ -509,6 +532,24 @@ function findQuotedHatDocument(message: any): any | null {
 
   return findHatDocument(quoted);
 }
+
+function findHcDocument(message: any): any | null {
+  const document =
+    message?.documentMessage ||
+    message?.documentWithCaptionMessage?.message?.documentMessage;
+
+  if (!document) return null;
+
+  return String(document.fileName || '').toLowerCase().endsWith('.hc')
+    ? document
+    : null;
+}
+
+function findQuotedHcDocument(message: any): any | null {
+  const context = message?.extendedTextMessage?.contextInfo;
+  return findHcDocument(context?.quotedMessage);
+}
+
 
 
 function decryptSettingFile(): string {
@@ -618,6 +659,73 @@ function clearDecryptLogs(): void {
       fs.unlinkSync(file);
     }
   } catch {}
+}
+
+async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> {
+  const document = findHcDocument(M.message) || findQuotedHcDocument(M.message);
+  if (!document) return false;
+
+  const fileName = String(document.fileName || 'file.hc');
+  const tempDir = path.join(config.dataDir, 'hat-tmp');
+  fs.mkdirSync(tempDir, { recursive: true });
+
+  const base = path.join(tempDir, `hc-${process.pid}-${Date.now()}`);
+  const inputFile = `${base}.hc`;
+  const outputFile = `${base}.txt`;
+
+  try {
+    console.log(chalk.cyan(`[HC] Decrypting ${fileName}`));
+    const stream = await downloadContentFromMessage(document, 'document');
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+    fs.writeFileSync(inputFile, Buffer.concat(chunks));
+
+    const result = await runHcDecrypt(inputFile, outputFile);
+
+    if (!result.ok) {
+      await currentSock.sendMessage(M.key.remoteJid!, {
+        text: 'HC decrypt failed.\\n\\n' + result.output.slice(0, 3000),
+      });
+      return true;
+    }
+
+    const plaintext = result.output;
+
+    await scanAndNotify(
+      plaintext,
+      'HC decrypted',
+      M.key.remoteJid || '',
+      M.key.participant || M.key.remoteJid || '',
+    );
+
+    if (!plaintext.trim()) {
+      await currentSock.sendMessage(M.key.remoteJid!, {
+        text: 'HC decryption completed, but the output is empty.',
+      });
+      return true;
+    }
+
+    const MAX = 6000;
+    for (let i = 0; i < plaintext.length; i += MAX) {
+      await currentSock.sendMessage(M.key.remoteJid!, {
+        text: plaintext.slice(i, i + MAX),
+      });
+    }
+
+    console.log(chalk.green(`[HC] Decrypted ${fileName}`));
+    return true;
+  } catch (error) {
+    await reportError('hc-decrypt', error);
+    try {
+      await currentSock.sendMessage(M.key.remoteJid!, {
+        text: 'HC decrypt failed: ' + errorText(error).slice(0, 2500),
+      });
+    } catch {}
+    return true;
+  } finally {
+    try { fs.rmSync(inputFile, { force: true }); } catch {}
+    try { fs.rmSync(outputFile, { force: true }); } catch {}
+  }
 }
 
 async function decryptHatFromMessage(
@@ -1115,25 +1223,44 @@ async function connect() {
               text.trim().toLowerCase() ===
               `${config.prefix}decrypt`
             ) {
-              const decrypted =
-                await decryptHatFromMessage(
-                  currentSock,
-                  M,
+              const hat =
+                findHatDocument(M.message) ||
+                findQuotedHatDocument(M.message);
+
+              const hc =
+                findHcDocument(M.message) ||
+                findQuotedHcDocument(M.message);
+
+              let decrypted = false;
+
+              if (hat) {
+                decrypted = await decryptHatFromMessage(currentSock, M);
+                logDecrypt(
+                  'decrypt-hat',
+                  M.key.remoteJid || '',
+                  M.key.participant || M.key.remoteJid || '',
+                  decrypted,
                 );
+              } else if (hc) {
+                decrypted = await decryptHcFromMessage(currentSock, M);
+                logDecrypt(
+                  'decrypt-hc',
+                  M.key.remoteJid || '',
+                  M.key.participant || M.key.remoteJid || '',
+                  decrypted,
+                );
+              }
 
               if (!decrypted) {
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
-                    text: error(
-                      '🔐 HAT DECRYPT',
-                      [
-                        'No .hat document found.',
-                        `Reply to a .hat file with ${config.prefix}decrypt.`,
-                      ],
-                    ),
-                  },
-                );
+                await commandReply({
+                  text: error(
+                    '🔐 DECRYPT',
+                    [
+                      'No .hat or .hc document found.',
+                      `Reply to a .hat or .hc file with ${config.prefix}decrypt.`,
+                    ],
+                  ),
+                });
               }
 
               continue;
