@@ -1,4 +1,5 @@
 import { Client, GatewayIntentBits, Message } from 'discord.js';
+import type { WAMessage } from '@whiskeysockets/baileys';
 import chalk from 'chalk';
 import { appendHistory } from './state.js';
 import { config } from './config.js';
@@ -24,13 +25,13 @@ export class DiscordBridge {
   private lastWaCommandText = '';
   private readonly outboundMessageIds = new Set<string>();
 
-  private rememberOutboundMessage(id: string | undefined) {
+  private rememberOutboundMessage(id: string | null | undefined) {
     if (!id) return;
     this.outboundMessageIds.add(id);
     setTimeout(() => this.outboundMessageIds.delete(id), 60_000);
   }
 
-  constructor(private sendWA: (jid: string, text: string) => Promise<{ key?: { id?: string } } | void>) {}
+  constructor(private sendWA: (jid: string, text: string) => Promise<WAMessage | undefined>) {}
 
   private async waitUntilReady(timeoutMs = 15000): Promise<boolean> {
     if (this.client?.isReady()) return true;
