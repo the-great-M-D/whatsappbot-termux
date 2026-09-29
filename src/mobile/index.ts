@@ -1193,6 +1193,34 @@ async function connect() {
               message.conversation ||
               message.extendedTextMessage?.text ||
               '';
+            /*
+             * Command replies always return to the originating WhatsApp chat.
+             * The original command is quoted so WhatsApp renders it as a reply,
+             * including when the command was issued inside a group.
+             */
+            const commandReply = async (content: any) => {
+              let payload =
+                typeof content === 'string'
+                  ? { text: content }
+                  : { ...content };
+
+              if (
+                typeof payload.text === 'string' &&
+                !payload.text.includes('╭━━━')
+              ) {
+                payload.text = info(
+                  'M_D TOOL',
+                  payload.text.split('\n'),
+                );
+              }
+
+              await currentSock.sendMessage(
+                M.key.remoteJid!,
+                payload,
+                { quoted: M },
+              );
+            };
+
 
             /*
              * Passive IP/link scanner.
@@ -1347,33 +1375,6 @@ async function connect() {
 
             const args = parts;
 
-            /*
-             * Command replies always return to the originating WhatsApp chat.
-             * The original command is quoted so WhatsApp renders it as a reply,
-             * including when the command was issued inside a group.
-             */
-            const commandReply = async (content: any) => {
-              let payload =
-                typeof content === 'string'
-                  ? { text: content }
-                  : { ...content };
-
-              if (
-                typeof payload.text === 'string' &&
-                !payload.text.includes('╭━━━')
-              ) {
-                payload.text = info(
-                  '🤖 M_D TOOL',
-                  payload.text.split('\n'),
-                );
-              }
-
-              await currentSock.sendMessage(
-                M.key.remoteJid!,
-                payload,
-                { quoted: M },
-              );
-            };
 
 
             /*
