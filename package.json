@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/mobile/index.js",
-    "mobile": "npm run build && npm start"
+    "mobile": "npm run build && npm start",
+    "test": "npm run build && node --test dist/mobile/scanner.test.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc13",

@@ -33,6 +33,7 @@ import {
 import {
   scanText,
   saveMatches,
+  savePayloadRecord,
   readMatches,
   clearMatches,
   scannerFile,
@@ -252,6 +253,48 @@ function scheduleReconnect(reason: string) {
 }
 
 
+/*
+ * Cache of group JID -> group name, so scanner
+ * alerts read "My Group" instead of
+ * "1234-5678@g.us".
+ */
+const chatNames = new Map<string, string>();
+
+async function chatDisplayName(
+  sock: ReturnType<typeof makeWASocket>,
+  jid: string,
+) {
+  if (!jid) {
+    return 'unknown';
+  }
+
+  const cached = chatNames.get(jid);
+
+  if (cached) {
+    return cached;
+  }
+
+  if (jid.endsWith('@g.us')) {
+    try {
+      const meta = await sock.groupMetadata(
+        jid,
+      );
+
+      const name = meta?.subject || jid;
+
+      chatNames.set(jid, name);
+
+      return name;
+    } catch {
+      return jid;
+    }
+  }
+
+  chatNames.set(jid, jid);
+
+  return jid;
+}
+
 async function scanAndNotify(
   text: string,
   source: string,
@@ -271,35 +314,67 @@ async function scanAndNotify(
 
   const fresh = saveMatches(matches);
 
+  /*
+   * Permanent, sanitized record of decrypted
+   * payloads. Secrets are redacted in place; the
+   * file is never pruned, so history survives
+   * past the 48-hour scanner-match retention.
+   */
+  if (source.toLowerCase().includes('decrypted')) {
+    try {
+      savePayloadRecord(
+        text,
+        source,
+        chat,
+        sender,
+      );
+    } catch (error) {
+      console.error(
+        chalk.gray(
+          '[SCANNER] payload record failed:',
+        ),
+        errorText(error),
+      );
+    }
+  }
+
   if (!fresh.length || !sock) {
     return;
   }
 
+  /*
+   * One batched summary per scanned text instead
+   * of a message per match.
+   */
+  const chatName =
+    await chatDisplayName(sock, chat);
+
+  const lines = [
+    `[SCANNER] ${fresh.length} new match` +
+      `${fresh.length === 1 ? '' : 'es'} (${source})`,
+  ];
+
+  for (const match of fresh.slice(0, 25)) {
+    const parts = [
+      `${match.type}: ${match.value}`,
+      match.path ? `path=${match.path}` : '',
+      `sender=${match.sender || 'unknown'}`,
+      `chat=${chatName}`,
+    ].filter(Boolean);
+
+    lines.push(parts.join(' | '));
+  }
+
+  if (fresh.length > 25) {
+    lines.push(
+      `...and ${fresh.length - 25} more`,
+    );
+  }
+
   for (const owner of config.owners) {
     try {
-      const body = fresh.map(match => {
-        const lines = [
-          '[SCANNER MATCH]',
-          `Type: ${match.type}`,
-          `Match: ${match.value}`,
-        ];
-
-        if (match.path) {
-          lines.push(`Path: ${match.path}`);
-        }
-
-        lines.push(
-          `Source: ${match.source}`,
-          `Sender: ${match.sender || 'unknown'}`,
-          `Chat: ${match.chat || 'unknown'}`,
-          `Time: ${new Date(match.ts).toISOString()}`,
-        );
-
-        return lines.join('\n');
-      }).join('\n\n');
-
       await sock.sendMessage(owner, {
-        text: body.slice(0, 6000),
+        text: lines.join('\n').slice(0, 6000),
       });
     } catch (error) {
       console.error(

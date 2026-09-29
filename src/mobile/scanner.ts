@@ -1,10 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 export type RedactedInfo = {
   key: string;
   valueType: string;
   length?: number;
+  /*
+   * Salted SHA-256 of the secret value (truncated).
+   * Lets you tell whether the same credential
+   * reappears across messages without ever
+   * storing the value itself.
+   */
+  fingerprint?: string;
 };
 
 export type ScanMatch = {
@@ -36,13 +44,38 @@ export type ScanMatch = {
   redacted?: RedactedInfo;
 };
 
-const FILE = path.join(
+const DATA_DIR =
   process.env.BOT_DATA_DIR ||
-    '/storage/1FC3-111D/discord',
+  '/storage/1FC3-111D/discord';
+
+const FILE = path.join(
+  DATA_DIR,
   'scanner-matches.jsonl',
 );
 
+/*
+ * Permanent, sanitized record of decrypted
+ * payloads. Never pruned, so history survives
+ * well past the 48-hour scanner-match retention.
+ */
+const PAYLOAD_FILE = path.join(
+  DATA_DIR,
+  'payloads.jsonl',
+);
+
+/*
+ * Per-install random salt for credential
+ * fingerprints. Stored so fingerprints stay
+ * comparable across restarts.
+ */
+const SALT_FILE = path.join(
+  DATA_DIR,
+  'scanner-salt',
+);
+
 const MAX_DEPTH = 24;
+
+const RETENTION_MS = 48 * 60 * 60 * 1000;
 
 const IPV4 =
   /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
@@ -81,6 +114,13 @@ const AUTH_HEADER =
  */
 const PRIVATE_KEY_BLOCK =
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
+
+/*
+ * Credentials embedded in URLs:
+ * scheme://user:password@host
+ */
+const URL_CREDS =
+  /((?:https?|ssh|socks4|socks5):\/\/)[^\s<>"'`@]+@/gi;
 
 /*
  * Key/cert-ish field names whose values may be
@@ -179,6 +219,86 @@ function describeValue(value: unknown): RedactedInfo {
   }
 }
 
+let saltCache: string | null = null;
+
+function getSalt(): string {
+  if (saltCache) {
+    return saltCache;
+  }
+
+  try {
+    if (fs.existsSync(SALT_FILE)) {
+      const stored = fs
+        .readFileSync(SALT_FILE, 'utf8')
+        .trim();
+
+      if (stored) {
+        saltCache = stored;
+
+        return stored;
+      }
+    }
+  } catch {
+    /*
+     * Fall through and create a new salt.
+     */
+  }
+
+  const generated =
+    crypto.randomBytes(32).toString('hex');
+
+  try {
+    ensure();
+
+    fs.writeFileSync(
+      SALT_FILE,
+      generated,
+      { mode: 0o600 },
+    );
+  } catch {
+    /*
+     * If the salt cannot be persisted, keep it in
+     * memory for this run only.
+     */
+  }
+
+  saltCache = generated;
+
+  return generated;
+}
+
+/*
+ * Salted SHA-256 fingerprint of a secret value.
+ * Comparisons survive restarts (salt is stored),
+ * but the value itself is never recoverable.
+ */
+function fingerprint(value: string) {
+  return crypto
+    .createHash('sha256')
+    .update(getSalt())
+    .update(value)
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function fingerprintValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return fingerprint('');
+  }
+
+  if (typeof value === 'string') {
+    return fingerprint(value);
+  }
+
+  try {
+    return fingerprint(
+      JSON.stringify(value) || String(value),
+    );
+  } catch {
+    return fingerprint(String(value));
+  }
+}
+
 function ensure() {
   fs.mkdirSync(path.dirname(FILE), {
     recursive: true,
@@ -204,7 +324,12 @@ function cleanUrl(value: string) {
      */
     for (const name of [...url.searchParams.keys()]) {
       if (isSensitiveKey(name)) {
-        url.searchParams.set(name, '[REDACTED]');
+        /*
+         * Plain "REDACTED" (no brackets): brackets
+         * would come back percent-encoded from
+         * url.search.
+         */
+        url.searchParams.set(name, 'REDACTED');
       }
     }
 
@@ -303,8 +428,8 @@ function addMatch(
 
 /*
  * Record a redacted field with metadata: key name,
- * JSON path, value type and length. The value
- * itself is never persisted.
+ * JSON path, value type, length and fingerprint.
+ * The value itself is never persisted.
  */
 function addRedacted(
   matches: ScanMatch[],
@@ -332,7 +457,7 @@ function addRedacted(
     chat,
     sender,
     matchPath,
-    { ...info, key },
+    { ...info, key, fingerprint: fingerprintValue(value) },
   );
 }
 
@@ -486,6 +611,24 @@ function scanString(
       continue;
     }
 
+    /*
+     * Skip "user:pass@host" embedded in a URL: the
+     * login part of a URL is not a free-standing
+     * username, and the match could otherwise
+     * capture the password too.
+     */
+    if (
+      match.index !== undefined &&
+      /:\/\//.test(
+        text.slice(
+          Math.max(0, match.index - 10),
+          match.index,
+        ),
+      )
+    ) {
+      continue;
+    }
+
     addMatch(
       matches,
       seen,
@@ -500,8 +643,8 @@ function scanString(
 
   /*
    * key=value secret pairs in loose text.
-   * Records the key name and the value's length,
-   * never the value itself.
+   * Records the key name, the value's length and
+   * a fingerprint, never the value itself.
    */
   for (
     const match of text.matchAll(SECRET_PAIR)
@@ -539,6 +682,9 @@ function scanString(
           ? { length: valuePart.length }
           : {}),
         key,
+        ...(valuePart
+          ? { fingerprint: fingerprint(valuePart) }
+          : {}),
       },
     );
   }
@@ -574,6 +720,7 @@ function scanString(
         key: 'authorization',
         valueType: scheme,
         length: material.length,
+        fingerprint: fingerprint(material),
       },
     );
   }
@@ -595,6 +742,7 @@ function scanString(
         key: 'privateKey',
         valueType: 'pem',
         length: raw.length,
+        fingerprint: fingerprint(raw),
       },
     );
   }
@@ -747,7 +895,8 @@ function scanValue(
 
       /*
        * Never descend into sensitive keys.
-       * Record key name, path, type and size.
+       * Record key name, path, type, size and a
+       * fingerprint.
        */
       if (isSensitiveKey(key)) {
         addRedacted(
@@ -880,6 +1029,55 @@ function existingKey(
   return `${match.type}:${match.value}:${match.path || ''}`;
 }
 
+/*
+ * Drop scanner matches older than the retention
+ * window. Keeps the file small (it is re-read in
+ * full on every message for dedupe) and lets a
+ * recurring match become "fresh" again after 48h.
+ */
+function pruneOldMatches() {
+  if (!fs.existsSync(FILE)) {
+    return;
+  }
+
+  const cutoff = Date.now() - RETENTION_MS;
+
+  const kept: string[] = [];
+
+  for (
+    const line of fs
+      .readFileSync(FILE, 'utf8')
+      .split('\n')
+  ) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    try {
+      const item =
+        JSON.parse(line) as { ts?: number };
+
+      if (
+        typeof item.ts === 'number' &&
+        item.ts >= cutoff
+      ) {
+        kept.push(line);
+      }
+    } catch {
+      /*
+       * Corrupt line: drop it.
+       */
+    }
+  }
+
+  fs.writeFileSync(
+    FILE,
+    kept.length
+      ? kept.join('\n') + '\n'
+      : '',
+  );
+}
+
 export function saveMatches(
   matches: ScanMatch[],
 ): ScanMatch[] {
@@ -946,7 +1144,195 @@ export function saveMatches(
     );
   }
 
+  pruneOldMatches();
+
   return fresh;
+}
+
+/*
+ * Sanitize loose text for the payload record:
+ * redact secret pairs, auth headers, PEM blocks
+ * and URL-embedded credentials in place.
+ */
+function sanitizeText(text: string) {
+  return text
+    .replace(
+      PRIVATE_KEY_BLOCK,
+      '[REDACTED: PEM PRIVATE KEY]',
+    )
+    .replace(
+      URL_CREDS,
+      (_full, scheme: string) =>
+        `${scheme}[REDACTED]@`,
+    )
+    .replace(
+      AUTH_HEADER,
+      full =>
+        full.replace(
+          /((?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+/i,
+          (_m: string, scheme: string) =>
+            scheme + '[REDACTED]',
+        ),
+    )
+    .replace(
+      SECRET_PAIR,
+      full =>
+        full.replace(
+          /(\s*[:=]\s*)(["']?)([^"',\s}]+)(["']?)/,
+          (_m: string, sep: string, q1: string, _v: string, q2: string) =>
+            `${sep}${q1}[REDACTED]${q2}`,
+        ),
+    );
+}
+
+/*
+ * Deep-copy a parsed payload with sensitive
+ * values replaced by "[REDACTED]" in place, so
+ * the full structure survives but credentials
+ * never touch disk.
+ */
+function sanitizeValue(
+  value: unknown,
+  depth = 0,
+): unknown {
+  if (
+    depth > MAX_DEPTH ||
+    value === null ||
+    value === undefined
+  ) {
+    return value ?? null;
+  }
+
+  if (typeof value === 'string') {
+    if (
+      value.includes('-----BEGIN') ||
+      looksLikeEncodedBlob(value)
+    ) {
+      return '[REDACTED: key material]';
+    }
+
+    return sanitizeText(value);
+  }
+
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(item =>
+      sanitizeValue(item, depth + 1),
+    );
+  }
+
+  if (typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+
+    for (
+      const [key, child] of Object.entries(
+        value as Record<string, unknown>,
+      )
+    ) {
+      if (isSensitiveKey(key)) {
+        out[key] = '[REDACTED]';
+
+        continue;
+      }
+
+      if (
+        typeof child === 'string' &&
+        KEY_MATERIAL_KEY.test(key) &&
+        (child.includes('-----BEGIN') ||
+          looksLikeEncodedBlob(child))
+      ) {
+        out[key] = '[REDACTED: key material]';
+
+        continue;
+      }
+
+      out[key] = sanitizeValue(child, depth + 1);
+    }
+
+    return out;
+  }
+
+  return value;
+}
+
+export type PayloadRecord = {
+  ts: number;
+  source: string;
+  chat: string;
+  sender: string;
+  payload: unknown;
+};
+
+/*
+ * Append a sanitized record of a decrypted payload
+ * to payloads.jsonl. This file is NEVER pruned:
+ * it is the permanent history that survives
+ * beyond the 48-hour scanner-match retention.
+ *
+ * Secrets are redacted in place; structure, hosts,
+ * ports, paths and usernames are preserved.
+ */
+export function savePayloadRecord(
+  text: string,
+  source: string,
+  chat: string,
+  sender: string,
+) {
+  if (!text.trim()) {
+    return;
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = undefined;
+  }
+
+  const record: PayloadRecord = {
+    ts: Date.now(),
+    source,
+    chat,
+    sender,
+    payload:
+      parsed !== undefined
+        ? sanitizeValue(parsed)
+        : sanitizeText(text),
+  };
+
+  ensure();
+
+  fs.appendFileSync(
+    PAYLOAD_FILE,
+    JSON.stringify(record) + '\n',
+  );
+}
+
+export function readPayloadRecords(
+  limit = 50,
+): string[] {
+  ensure();
+
+  if (!fs.existsSync(PAYLOAD_FILE)) {
+    return [];
+  }
+
+  return fs
+    .readFileSync(PAYLOAD_FILE, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .slice(-Math.min(limit, 200));
+}
+
+export function payloadFile() {
+  return PAYLOAD_FILE;
 }
 
 export function readMatches(

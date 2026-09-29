@@ -154,8 +154,18 @@ Do not delete this directory unless you intentionally want to re-authenticate.
 └── discord/
     ├── bridge-history.jsonl
     ├── moderation.json
-    └── errors.jsonl
+    ├── errors.jsonl
+    ├── scanner-matches.jsonl
+    ├── payloads.jsonl
+    └── scanner-salt
 ```
+
+Scanner files:
+- `scanner-matches.jsonl` - detected IPs, endpoints, URLs and redacted credential metadata. Retained 48 hours.
+- `payloads.jsonl` - permanent, sanitized record of every decrypted payload. Sensitive values are replaced with `[REDACTED]` in place; structure, hosts, ports and usernames are preserved. Never pruned.
+- `scanner-salt` - per-install salt for credential fingerprints. Do not delete it if you rely on fingerprint comparisons across restarts.
+
+Run the scanner tests with: `npm test`
 
 Python scripts are stored inside the project:
 
