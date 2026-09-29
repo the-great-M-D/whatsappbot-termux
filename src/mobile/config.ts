@@ -23,6 +23,7 @@ export const config = {
   discordToken: process.env.DISCORD_TOKEN || '',
   discordChannelId: process.env.DISCORD_CHANNEL_ID || '',
   discordTarget: process.env.DISCORD_WA_TARGET || '',
+  discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || '',
   discordAllowed: csv(process.env.DISCORD_ALLOWED_USER_IDS),
   allowedCommands: csv(process.env.DEV_ALLOWED_COMMANDS),
   allowedScripts: csv(process.env.DEV_ALLOWED_SCRIPTS),
