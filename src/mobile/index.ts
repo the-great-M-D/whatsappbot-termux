@@ -102,7 +102,7 @@ function isOwner(jid: string) {
   const incoming = jidNumber(jid);
 
   if (!incoming) {
-    console.log(chalk.red(\`[OWNER] empty sender JID: \${jid}\`));
+    console.log(chalk.red(`[OWNER] empty sender JID: \${jid}`));
     return false;
   }
 
@@ -114,8 +114,8 @@ function isOwner(jid: string) {
 
   console.log(
     matched
-      ? chalk.green(\`[OWNER] authorized \${incoming}\`)
-      : chalk.red(\`[OWNER] denied \${incoming} owners=\${owners.join(',')}\`)
+      ? chalk.green(`[OWNER] authorized \${incoming}`)
+      : chalk.red(`[OWNER] denied \${incoming} owners=\${owners.join(',')}`)
   );
 
   return matched;
@@ -1110,9 +1110,13 @@ async function connect() {
                 await currentSock.sendMessage(
                   M.key.remoteJid!,
                   {
-                    text:
-                      'Reply to a .hat file with ' +
-                      `${config.prefix}decrypt.`,
+                    text: error(
+                      '🔐 HAT DECRYPT',
+                      [
+                        'No .hat document found.',
+                        `Reply to a .hat file with ${config.prefix}decrypt.`,
+                      ],
+                    ),
                   },
                 );
               }
@@ -1206,10 +1210,10 @@ async function connect() {
              * The original command is quoted so WhatsApp renders it as a reply,
              * including when the command was issued inside a group.
              */
-            const commandReply = async (text: string) => {
+            const commandReply = async (content: any) => {
               await currentSock.sendMessage(
                 M.key.remoteJid!,
-                { text },
+                typeof content === 'string' ? { text: content } : content,
                 { quoted: M },
               );
             };
@@ -1238,9 +1242,8 @@ async function connect() {
              * !help
              */
             if (command === 'help') {
-              await currentSock.sendMessage(
-                M.key.remoteJid!,
-                {
+              await commandReply({
+                
                   text: box(
                     '🤖 BOT HELP',
                     [
@@ -1305,9 +1308,8 @@ async function connect() {
                     '',
                 )
               ) {
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: error(
                       '🔐 ACCESS DENIED',
                       [
@@ -1328,9 +1330,8 @@ async function connect() {
               if (action === 'on') {
                 setDecryptEnabled(true);
 
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: success(
                       '🔓 HAT DECRYPT',
                       [
@@ -1350,9 +1351,8 @@ async function connect() {
               if (action === 'off') {
                 setDecryptEnabled(false);
 
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: warning(
                       '🔓 HAT DECRYPT',
                       [
@@ -1370,14 +1370,13 @@ async function connect() {
                * !decrypt status
                */
               if (action === 'status') {
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: info(
                       '🔓 HAT DECRYPT',
                       [
-                        \`Status : \${decryptEnabled() ? 'ON' : 'OFF'}\`,
-                        \`Log file : \${decryptLogFile()}\`,
+                        `Status : \${decryptEnabled() ? 'ON' : 'OFF'}`,
+                        `Log file : \${decryptLogFile()}`,
                       ],
                     ),
                   },
@@ -1392,9 +1391,8 @@ async function connect() {
               if (action === 'logs') {
                 const logs = recentDecryptLogs(10);
 
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: info(
                       '🔐 DECRYPT LOGS',
                       logs.length ? logs : ['No decrypt logs.'],
@@ -1409,11 +1407,12 @@ async function connect() {
                * !decrypt file
                */
               if (action === 'file') {
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
-                    text:
-                      `Decrypt log file:\\n${decryptLogFile()}`,
+                await commandReply({
+                  
+                    text: info(
+                      '🔐 DECRYPT LOG FILE',
+                      [decryptLogFile()],
+                    ),
                   },
                 );
 
@@ -1426,9 +1425,8 @@ async function connect() {
               if (action === 'clear') {
                 clearDecryptLogs();
 
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: success('🔐 DECRYPT LOGS', ['Log cleared.']),
                   },
                 );
@@ -1442,12 +1440,15 @@ async function connect() {
                * Only decrypt when explicitly enabled.
                */
               if (!decryptEnabled()) {
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
-                    text:
-                      'HAT decryption is OFF.\\n' +
-                      `Use ${config.prefix}decrypt on first.`,
+                await commandReply({
+                  
+                    text: warning(
+                      '🔓 HAT DECRYPT',
+                      [
+                        'Status : OFF',
+                        `Use ${config.prefix}decrypt on first.`,
+                      ],
+                    ),
                   },
                 );
 
@@ -1470,9 +1471,8 @@ async function connect() {
               );
 
               if (!decrypted) {
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text:
                       'Reply to a .hat file with ' +
                       `${config.prefix}decrypt.`,
@@ -1494,9 +1494,8 @@ async function connect() {
                     '',
                 )
               ) {
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  { text: error('🔐 ACCESS DENIED', ['Owner permission required.']) },
+                await commandReply({
+                   text: error('🔐 ACCESS DENIED', ['Owner permission required.']) },
                 );
                 continue;
               }
@@ -1507,9 +1506,8 @@ async function connect() {
               if (action === 'on') {
                 scannerEnabled = true;
 
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: success('🔎 SCANNER', ['Status : ON', 'Passive IP/URL scanning enabled.']),
                   },
                 );
@@ -1520,9 +1518,8 @@ async function connect() {
               if (action === 'off') {
                 scannerEnabled = false;
 
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: warning('🔎 SCANNER', ['Status : OFF', 'Passive IP/URL scanning disabled.']),
                   },
                 );
@@ -1533,9 +1530,8 @@ async function connect() {
               if (action === 'clear') {
                 clearMatches();
 
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: success('🔎 SCANNER', ['Saved matches cleared.']),
                   },
                 );
@@ -1544,9 +1540,8 @@ async function connect() {
               }
 
               if (action === 'file') {
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text:
                       'Scanner file:\n' +
                       scannerFile(),
@@ -1562,9 +1557,8 @@ async function connect() {
                     Number(args[1]) || 50,
                   );
 
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text:
                       lines.length
                         ? lines.join('\n')
@@ -1575,19 +1569,18 @@ async function connect() {
                 continue;
               }
 
-              await currentSock.sendMessage(
-                M.key.remoteJid!,
-                {
+              await commandReply({
+                
                   text: info(
                   '🔎 SCANNER STATUS',
                   [
-                    \`Enabled : \${scannerEnabled ? 'YES' : 'NO'}\`,
+                    `Enabled : \${scannerEnabled ? 'YES' : 'NO'}`,
                     '',
-                    \`\${config.prefix}scan on\`,
-                    \`\${config.prefix}scan off\`,
-                    \`\${config.prefix}scan logs\`,
-                    \`\${config.prefix}scan clear\`,
-                    \`\${config.prefix}scan file\`,
+                    `\${config.prefix}scan on`,
+                    `\${config.prefix}scan off`,
+                    `\${config.prefix}scan logs`,
+                    `\${config.prefix}scan clear`,
+                    `\${config.prefix}scan file`,
                   ],
                 ),
                 },
@@ -1609,9 +1602,8 @@ async function connect() {
                     '',
                 )
               ) {
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: error('🔐 ACCESS DENIED', ['Owner permission required.']),
                   },
                 );
@@ -1625,9 +1617,8 @@ async function connect() {
                   reply: async (
                     replyText: string,
                   ) => {
-                    await currentSock.sendMessage(
-                      M.key.remoteJid!,
-                      { text: replyText },
+                    await commandReply({
+                       text: replyText },
                     );
                   },
                   sender:
@@ -1667,9 +1658,8 @@ async function connect() {
                     '',
                 )
               ) {
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: error('🔐 ACCESS DENIED', ['Owner permission required.']),
                   },
                 );
@@ -1688,9 +1678,8 @@ async function connect() {
               if (
                 command === 'status'
               ) {
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: [
                       'Bot status',
                       `WhatsApp: ${waState}`,
@@ -1733,9 +1722,8 @@ async function connect() {
                 const lines =
                   readHistory(50);
 
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text:
                       lines.length
                         ? lines
@@ -1754,9 +1742,8 @@ async function connect() {
                 const lines =
                   readErrors(50);
 
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text:
                       lines.length
                         ? lines
@@ -1775,9 +1762,8 @@ async function connect() {
               ) {
                 clearErrors();
 
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text:
                       'Error log cleared.',
                   },
@@ -1793,9 +1779,8 @@ async function connect() {
                   waState ===
                   'connected'
                 ) {
-                  await currentSock.sendMessage(
-                    M.key.remoteJid!,
-                    {
+                  await commandReply({
+                    
                       text:
                         'Repair refused while WhatsApp is connected.',
                     },
@@ -1818,9 +1803,8 @@ async function connect() {
                 pairing = false;
                 reconnectAttempt = 0;
 
-                await currentSock.sendMessage(
-                  M.key.remoteJid!,
-                  {
+                await commandReply({
+                  
                     text: backup
                       ? [
                           'Auth archived.',
@@ -1850,9 +1834,8 @@ async function connect() {
                     reply: async (
                       replyText: string,
                     ) => {
-                      await currentSock.sendMessage(
-                        M.key.remoteJid!,
-                        {
+                      await commandReply({
+                        
                           text: replyText,
                         },
                       );
@@ -1898,9 +1881,8 @@ async function connect() {
                     reply: async (
                       replyText: string,
                     ) => {
-                      await currentSock.sendMessage(
-                        M.key.remoteJid!,
-                        {
+                      await commandReply({
+                        
                           text: replyText,
                         },
                       );
