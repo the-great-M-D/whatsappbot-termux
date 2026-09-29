@@ -1513,3 +1513,584 @@ async function connect() {
                   },
                 );
               }
+
+              continue;
+            }
+
+            /*
+             * !scan
+             */
+            if (command === 'scan') {
+              if (
+                !isOwner(
+                  M.key.participant ||
+                    M.key.remoteJid ||
+                    '',
+                )
+              ) {
+                await commandReply({
+                   text: error('⛔ ACCESS DENIED', ['Owner permission required.']) },
+                );
+                continue;
+              }
+
+              const action =
+                (args[0] || 'status').toLowerCase();
+
+              if (action === 'on') {
+                scannerEnabled = true;
+
+                await commandReply({
+                  
+                    text: success('📡 SCANNER', ['Status : ON', 'Passive IP/URL scanning enabled.']),
+                  },
+                );
+
+                continue;
+              }
+
+              if (action === 'off') {
+                scannerEnabled = false;
+
+                await commandReply({
+                  
+                    text: warning('📡 SCANNER', ['Status : OFF', 'Passive IP/URL scanning disabled.']),
+                  },
+                );
+
+                continue;
+              }
+
+              if (action === 'clear') {
+                clearMatches();
+
+                await commandReply({
+                  
+                    text: success('📡 SCANNER', ['Saved matches cleared.']),
+                  },
+                );
+
+                continue;
+              }
+
+              if (action === 'file') {
+                await commandReply({
+                  
+                    text: info(
+                      '📡 SCANNER FILE',
+                      [scannerFile()],
+                    ),
+                  },
+                );
+
+                continue;
+              }
+
+              if (action === 'logs') {
+                const lines =
+                  readMatches(
+                    Number(args[1]) || 50,
+                  );
+
+                await commandReply({
+                  
+                    text: info(
+                      '📡 SCANNER LOGS',
+                      lines.length
+                        ? lines
+                        : ['No scanner matches.'],
+                    ),
+                  },
+                );
+
+                continue;
+              }
+
+              await commandReply({
+                
+                  text: info(
+                  '📡 SCANNER STATUS',
+                  [
+                    `Enabled : ${scannerEnabled ? 'YES' : 'NO'}`,
+                    '',
+                    `${config.prefix}scan on`,
+                    `${config.prefix}scan off`,
+                    `${config.prefix}scan logs`,
+                    `${config.prefix}scan clear`,
+                    `${config.prefix}scan file`,
+                  ],
+                ),
+                },
+              );
+
+              continue;
+            }
+
+            /*
+             * !config
+             */
+            if (
+              command === 'config'
+            ) {
+              if (
+                !isOwner(
+                  M.key.participant ||
+                    M.key.remoteJid ||
+                    '',
+                )
+              ) {
+                await commandReply({
+                  
+                    text: error('⛔ ACCESS DENIED', ['Owner permission required.']),
+                  },
+                );
+
+                continue;
+              }
+
+              await configCommand(
+                {
+                  ...M,
+                  reply: async (
+                    replyText: string,
+                  ) => {
+                    await commandReply({
+                       text: replyText },
+                    );
+                  },
+                  sender:
+                    M.key.participant ||
+                    M.key.remoteJid ||
+                    '',
+                },
+                args,
+              );
+
+              continue;
+            }
+
+            /*
+             * Development commands.
+             *
+             * Existing dev.ts owns its
+             * command implementation.
+             */
+            if (
+              [
+                'dev',
+                'sh',
+                'py',
+                'status',
+                'logs',
+                'errors',
+                'clearerrors',
+                'restart',
+                'repair',
+              ].includes(command)
+            ) {
+              if (
+                !isOwner(
+                  M.key.participant ||
+                    M.key.remoteJid ||
+                    '',
+                )
+              ) {
+                await commandReply({
+                  
+                    text: error('⛔ ACCESS DENIED', ['Owner permission required.']),
+                  },
+                );
+
+                continue;
+              }
+
+              const devArgs =
+                command === 'dev'
+                  ? args
+                  : [
+                      command,
+                      ...args,
+                    ];
+
+              if (
+                command === 'status'
+              ) {
+                await commandReply({
+                  
+                    text: [
+                      'Bot status',
+                      `WhatsApp: ${waState}`,
+                      `Pairing: ${
+                        pairing
+                          ? 'active'
+                          : 'idle'
+                      }`,
+                      `Discord: ${
+                        discord.client?.isReady()
+                          ? 'connected'
+                          : 'disconnected'
+                      }`,
+                      `Discord target: ${
+                        config.discordTarget ||
+                        'not set'
+                      }`,
+                      `Reconnect attempt: ${
+                        reconnectAttempt
+                      }`,
+                      `Last code: ${
+                        lastDisconnectCode ??
+                        'none'
+                      }`,
+                      `Last reason: ${
+                        lastDisconnectReason ||
+                        'none'
+                      }`,
+                      `Uptime: ${uptime()}`,
+                    ].join('\n'),
+                  },
+                );
+
+                continue;
+              }
+
+              if (
+                command === 'logs'
+              ) {
+                const lines =
+                  readHistory(50);
+
+                await commandReply({
+                  
+                    text:
+                      lines.length
+                        ? lines
+                            .join('\n')
+                            .slice(-6000)
+                        : 'No Discord bridge history.',
+                  },
+                );
+
+                continue;
+              }
+
+              if (
+                command === 'errors'
+              ) {
+                const lines =
+                  readErrors(50);
+
+                await commandReply({
+                  
+                    text:
+                      lines.length
+                        ? lines
+                            .join('\n')
+                            .slice(-6000)
+                        : 'No recorded errors.',
+                  },
+                );
+
+                continue;
+              }
+
+              if (
+                command ===
+                'clearerrors'
+              ) {
+                clearErrors();
+
+                await commandReply({
+                  
+                    text:
+                      'Error log cleared.',
+                  },
+                );
+
+                continue;
+              }
+
+              if (
+                command === 'repair'
+              ) {
+                if (
+                  waState ===
+                  'connected'
+                ) {
+                  await commandReply({
+                    
+                      text:
+                        'Repair refused while WhatsApp is connected.',
+                    },
+                  );
+
+                  continue;
+                }
+
+                if (reconnectTimer) {
+                  clearTimeout(
+                    reconnectTimer,
+                  );
+
+                  reconnectTimer = null;
+                }
+
+                const backup =
+                  archiveAuth();
+
+                pairing = false;
+                reconnectAttempt = 0;
+
+                await commandReply({
+                  
+                    text: backup
+                      ? [
+                          'Auth archived.',
+                          `Backup: ${backup}`,
+                          'Starting fresh pairing...',
+                        ].join('\n')
+                      : [
+                          'No existing auth found.',
+                          'Starting fresh pairing...',
+                        ].join('\n'),
+                  },
+                );
+
+                sock = null;
+
+                await sleep(1000);
+
+                void connect();
+
+                continue;
+              }
+
+              try {
+                await dev(
+                  {
+                    ...M,
+                    reply: async (
+                      replyText: string,
+                    ) => {
+                      await commandReply({
+                        
+                          text: replyText,
+                        },
+                      );
+                    },
+                    sender:
+                      M.key.participant ||
+                      M.key.remoteJid ||
+                      '',
+                  },
+                  devArgs,
+                );
+              } catch (error) {
+                await reportError(
+                  'dev-command',
+                  error,
+                );
+              }
+
+              continue;
+            }
+
+            /*
+             * Moderation commands.
+             */
+            if (
+              [
+                'warn',
+                'warnings',
+                'clearwarn',
+                'kick',
+                'mute',
+                'unmute',
+                'add',
+                'promote',
+                'demote',
+              ].includes(command)
+            ) {
+              try {
+                await moderate(
+                  currentSock,
+                  {
+                    ...M,
+                    reply: async (
+                      replyText: string,
+                    ) => {
+                      await commandReply({
+                        
+                          text: replyText,
+                        },
+                      );
+                    },
+                    sender:
+                      M.key.participant ||
+                      M.key.remoteJid ||
+                      '',
+                  },
+                  command,
+                  args.join(' '),
+                );
+              } catch (error) {
+                await reportError(
+                  'moderation',
+                  error,
+                );
+              }
+
+              continue;
+            }
+
+          } catch (error) {
+            await reportError(
+              'message-handler',
+              error,
+            );
+          }
+        }
+      },
+    );
+
+    /*
+     * New account: request phone
+     * pairing code.
+     */
+    if (
+      !state.creds.registered
+    ) {
+      /*
+       * Wait for the socket to finish the initial
+       * connection handshake before requesting
+       * the phone-number pairing code.
+       */
+      const pairingDeadline = Date.now() + 30_000;
+
+      while (
+        Date.now() < pairingDeadline &&
+        sock === currentSock &&
+        !state.creds.registered
+      ) {
+        if (String(waState) === 'connected') {
+          break;
+        }
+
+        await sleep(500);
+      }
+
+      if (
+        sock === currentSock &&
+        !state.creds.registered &&
+        !pairing
+      ) {
+        await requestPairingCode(
+          {
+            state,
+            saveCreds,
+          },
+        );
+      }
+    }
+
+  } catch (error) {
+    waState = 'disconnected';
+
+    await reportError(
+      'connect',
+      error,
+    );
+
+    scheduleReconnect(
+      'connect() failed',
+    );
+  } finally {
+    connectInProgress = false;
+  }
+}
+
+const discord =
+  new DiscordBridge(
+    async (
+      jid,
+      text,
+    ) => {
+      if (
+        !sock ||
+        waState !== 'connected'
+      ) {
+        throw new Error(
+          'WhatsApp is not connected.',
+        );
+      }
+
+      await sock.sendMessage(
+        jid,
+        { text },
+      );
+    },
+  );
+
+async function startup() {
+  ensureDirs();
+
+  console.log('');
+  console.log(
+    chalk.cyan(
+      '========================================',
+    ),
+  );
+  console.log(
+    chalk.cyan(
+      ' M_D TOOL — Termux Mobile',
+    ),
+  );
+  console.log(
+    chalk.cyan(
+      '========================================',
+    ),
+  );
+
+  console.log(
+    `Auth: ${config.authDir}`,
+  );
+
+  console.log(
+    `Data: ${config.dataDir}`,
+  );
+
+  console.log(
+    `Discord target: ${
+      config.discordTarget ||
+      'disabled'
+    }`,
+  );
+
+  console.log(
+    `Owners: ${
+      config.owners.length
+    }`,
+  );
+
+  console.log(
+    chalk.yellow(
+      'QR pairing: DISABLED',
+    ),
+  );
+
+  console.log(
+    chalk.green(
+      'Phone-number pairing: ENABLED',
+    ),
+  );
+
+  console.log('');
+
+  await connect();
+}
+
+void startup().catch(error => {
+  void reportError(
+    'startup',
+    error,
+  );
+});
