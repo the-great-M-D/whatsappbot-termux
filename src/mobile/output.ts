@@ -5,10 +5,10 @@ export type OutputStatus =
   | 'info';
 
 const ICONS: Record<OutputStatus, string> = {
-  success: '✓',
-  error: '✕',
-  warning: '!',
-  info: '•',
+  success: '✅',
+  error: '❌',
+  warning: '⚠️',
+  info: 'ℹ️',
 };
 
 export function box(
@@ -19,12 +19,10 @@ export function box(
   const icon = status ? `${ICONS[status]} ` : '';
 
   return [
-    `╭━━━ ${icon}${title} ━━━╮`,
-    '┃',
-    ...lines.map(line => `┃ ${line}`),
-    '┃',
-    '╰━━━━━━━━━━━━━━━━━━━━━━╯',
-  ].join('\n');
+    `${icon}${title}`,
+    '━━━━━━━━━━━━━━━━',
+    ...lines,
+  ].join('\\n');
 }
 
 export function success(
