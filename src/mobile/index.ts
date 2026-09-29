@@ -122,6 +122,21 @@ function isOwner(jid: string) {
   return matched;
 }
 
+function isCommandAuthorized(M: any) {
+  // Commands sent by the bot account itself (fromMe=true) are trusted.
+  // This allows commands issued from the bot's own linked-device session.
+  if (M?.key?.fromMe === true) {
+    console.log(chalk.green('[COMMAND] authorized: bot self'));
+    return true;
+  }
+
+  return isOwner(
+    M?.key?.participant ||
+      M?.key?.remoteJid ||
+      '',
+  );
+}
+
 async function ownerAlert(text: string) {
   if (!sock || waState !== 'connected') {
     return;
@@ -1284,10 +1299,6 @@ async function connect() {
               continue;
             }
 
-            if (M.key.fromMe) {
-              continue;
-            }
-
             const message =
               M.message;
 
@@ -1514,12 +1525,8 @@ async function connect() {
              * people who type !commands.
              */
             if (
-              !isOwner(
-                M.key.participant ||
-                  M.key.remoteJid ||
-                  '',
-              )
-            ) {
+                !isCommandAuthorized(M)
+              ) {
               continue;
             }
 
@@ -1606,11 +1613,7 @@ async function connect() {
              */
             if (command === 'decrypt') {
               if (
-                !isOwner(
-                  M.key.participant ||
-                    M.key.remoteJid ||
-                    '',
-                )
+                !isCommandAuthorized(M)
               ) {
                 await commandReply({
                   
@@ -1807,11 +1810,7 @@ async function connect() {
              */
             if (command === 'scan') {
               if (
-                !isOwner(
-                  M.key.participant ||
-                    M.key.remoteJid ||
-                    '',
-                )
+                !isCommandAuthorized(M)
               ) {
                 await commandReply({
                    text: error('⛔ ACCESS DENIED', ['Owner permission required.']) },
@@ -1918,11 +1917,7 @@ async function connect() {
               command === 'config'
             ) {
               if (
-                !isOwner(
-                  M.key.participant ||
-                    M.key.remoteJid ||
-                    '',
-                )
+                !isCommandAuthorized(M)
               ) {
                 await commandReply({
                   
@@ -1974,11 +1969,7 @@ async function connect() {
               ].includes(command)
             ) {
               if (
-                !isOwner(
-                  M.key.participant ||
-                    M.key.remoteJid ||
-                    '',
-                )
+                !isCommandAuthorized(M)
               ) {
                 await commandReply({
                   
