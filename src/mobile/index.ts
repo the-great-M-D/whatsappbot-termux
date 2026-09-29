@@ -1242,7 +1242,7 @@ async function connect() {
             ) {
               await commandReply(
                 success(
-                  '🤖 BOT ONLINE',
+                  '🟢 BOT ONLINE',
                   [
                     'Status : Connected',
                     'WhatsApp : Ready',
@@ -1260,13 +1260,13 @@ async function connect() {
               await commandReply({
                 
                   text: box(
-                    '🤖 BOT HELP',
+                    '📖 BOT HELP',
                     [
                       'GENERAL',
                       `${config.prefix}help  — show commands`,
                       `${config.prefix}hi    — bot online check`,
                       '',
-                      '🔎 SCANNER',
+                      '📡 SCANNER',
                       `${config.prefix}scan`,
                       `${config.prefix}scan on`,
                       `${config.prefix}scan off`,
@@ -1295,7 +1295,7 @@ async function connect() {
                       `${config.prefix}promote`,
                       `${config.prefix}demote`,
                       '',
-                      '⚙ ADMIN / DEV',
+                      '⚙️ ADMIN / DEV',
                       `${config.prefix}config`,
                       `${config.prefix}dev status`,
                       `${config.prefix}dev logs`,
@@ -1326,7 +1326,7 @@ async function connect() {
                 await commandReply({
                   
                     text: error(
-                      '🔐 ACCESS DENIED',
+                      '⛔ ACCESS DENIED',
                       [
                         'Owner permission required.',
                       ],
@@ -1409,7 +1409,7 @@ async function connect() {
                 await commandReply({
                   
                     text: info(
-                      '🔐 DECRYPT LOGS',
+                      '📜 DECRYPT LOGS',
                       logs.length ? logs : ['No decrypt logs.'],
                     ),
                   },
@@ -1425,7 +1425,7 @@ async function connect() {
                 await commandReply({
                   
                     text: info(
-                      '🔐 DECRYPT LOG FILE',
+                      '📜 DECRYPT LOG FILE',
                       [decryptLogFile()],
                     ),
                   },
@@ -1442,7 +1442,7 @@ async function connect() {
 
                 await commandReply({
                   
-                    text: success('🔐 DECRYPT LOGS', ['Log cleared.']),
+                    text: success('📜 DECRYPT LOGS', ['Log cleared.']),
                   },
                 );
 
@@ -1514,7 +1514,7 @@ async function connect() {
                 )
               ) {
                 await commandReply({
-                   text: error('🔐 ACCESS DENIED', ['Owner permission required.']) },
+                   text: error('⛔ ACCESS DENIED', ['Owner permission required.']) },
                 );
                 continue;
               }
@@ -1527,7 +1527,7 @@ async function connect() {
 
                 await commandReply({
                   
-                    text: success('🔎 SCANNER', ['Status : ON', 'Passive IP/URL scanning enabled.']),
+                    text: success('📡 SCANNER', ['Status : ON', 'Passive IP/URL scanning enabled.']),
                   },
                 );
 
@@ -1539,7 +1539,7 @@ async function connect() {
 
                 await commandReply({
                   
-                    text: warning('🔎 SCANNER', ['Status : OFF', 'Passive IP/URL scanning disabled.']),
+                    text: warning('📡 SCANNER', ['Status : OFF', 'Passive IP/URL scanning disabled.']),
                   },
                 );
 
@@ -1551,7 +1551,7 @@ async function connect() {
 
                 await commandReply({
                   
-                    text: success('🔎 SCANNER', ['Saved matches cleared.']),
+                    text: success('📡 SCANNER', ['Saved matches cleared.']),
                   },
                 );
 
@@ -1562,7 +1562,7 @@ async function connect() {
                 await commandReply({
                   
                     text: info(
-                      '🔎 SCANNER FILE',
+                      '📡 SCANNER FILE',
                       [scannerFile()],
                     ),
                   },
@@ -1580,7 +1580,7 @@ async function connect() {
                 await commandReply({
                   
                     text: info(
-                      '🔎 SCANNER LOGS',
+                      '📡 SCANNER LOGS',
                       lines.length
                         ? lines
                         : ['No scanner matches.'],
@@ -1594,7 +1594,7 @@ async function connect() {
               await commandReply({
                 
                   text: info(
-                  '🔎 SCANNER STATUS',
+                  '📡 SCANNER STATUS',
                   [
                     `Enabled : ${scannerEnabled ? 'YES' : 'NO'}`,
                     '',
@@ -1626,7 +1626,7 @@ async function connect() {
               ) {
                 await commandReply({
                   
-                    text: error('🔐 ACCESS DENIED', ['Owner permission required.']),
+                    text: error('⛔ ACCESS DENIED', ['Owner permission required.']),
                   },
                 );
 
@@ -1682,7 +1682,7 @@ async function connect() {
               ) {
                 await commandReply({
                   
-                    text: error('🔐 ACCESS DENIED', ['Owner permission required.']),
+                    text: error('⛔ ACCESS DENIED', ['Owner permission required.']),
                   },
                 );
 
