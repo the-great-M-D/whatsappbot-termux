@@ -385,6 +385,24 @@ async function scanAndNotify(
       );
     }
   }
+
+  try {
+    await discord.scanner(
+      fresh.map(match => ({
+        type: match.type,
+        value: match.value,
+        source: match.source,
+        chat: chatName,
+        sender: match.sender,
+        path: match.path,
+      })),
+    );
+  } catch (error) {
+    console.error(
+      chalk.gray('[SCANNER] Discord notification failed:'),
+      errorText(error),
+    );
+  }
 }
 
 async function requestPairingCode(
@@ -1315,6 +1333,36 @@ async function connect() {
               await scanAndNotify(
                 text,
                 'WhatsApp',
+                M.key.remoteJid || '',
+                M.key.participant ||
+                  M.key.remoteJid ||
+                  '',
+              );
+            }
+
+            /*
+             * Scan quoted/replied-to text with the same
+             * passive scanner. Credentials remain redacted
+             * by scanner.ts and are never forwarded in
+             * plaintext.
+             */
+            const contextInfo =
+              message.extendedTextMessage?.contextInfo;
+
+            const quotedMessage =
+              contextInfo?.quotedMessage;
+
+            const quotedText =
+              quotedMessage?.conversation ||
+              quotedMessage?.extendedTextMessage?.text ||
+              quotedMessage?.imageMessage?.caption ||
+              quotedMessage?.videoMessage?.caption ||
+              '';
+
+            if (quotedText.trim()) {
+              await scanAndNotify(
+                quotedText,
+                'WhatsApp reply/quoted message',
                 M.key.remoteJid || '',
                 M.key.participant ||
                   M.key.remoteJid ||
