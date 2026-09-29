@@ -278,15 +278,24 @@ async function scanAndNotify(
   for (const owner of config.owners) {
     try {
       const body = fresh.map(match => {
-        return [
+        const lines = [
           '[SCANNER MATCH]',
           `Type: ${match.type}`,
           `Match: ${match.value}`,
+        ];
+
+        if (match.path) {
+          lines.push(`Path: ${match.path}`);
+        }
+
+        lines.push(
           `Source: ${match.source}`,
           `Sender: ${match.sender || 'unknown'}`,
           `Chat: ${match.chat || 'unknown'}`,
           `Time: ${new Date(match.ts).toISOString()}`,
-        ].join('\n');
+        );
+
+        return lines.join('\n');
       }).join('\n\n');
 
       await sock.sendMessage(owner, {
