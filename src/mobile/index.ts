@@ -1498,6 +1498,8 @@ async function connect() {
                   M.pushName ||
                     'Unknown',
                   discordText,
+                  M.key.id || undefined,
+                  M.key.fromMe === true,
                 );
               } catch (error) {
                 await reportError(
@@ -2319,7 +2321,7 @@ const discord =
         );
       }
 
-      await sock.sendMessage(
+      return await sock.sendMessage(
         jid,
         { text },
       );
