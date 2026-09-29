@@ -1466,6 +1466,7 @@ async function connect() {
              * Discord bridge.
              */
             if (
+              !M.key.fromMe &&
               config.discordTarget &&
               M.key.remoteJid ===
                 config.discordTarget
