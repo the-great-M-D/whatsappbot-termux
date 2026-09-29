@@ -2,6 +2,15 @@ import { Client, GatewayIntentBits, Message } from 'discord.js';
 import { appendHistory } from './state.js';
 import { config } from './config.js';
 
+export type DiscordScannerMatch = {
+  type: string;
+  value: string;
+  source: string;
+  chat: string;
+  sender: string;
+  path?: string;
+};
+
 export class DiscordBridge {
   client: Client | null = null;
   constructor(private sendWA: (jid: string, text: string) => Promise<void>) {}
@@ -26,6 +35,40 @@ export class DiscordBridge {
     });
     await this.client.login(config.discordToken);
   }
+  async scanner(matches: DiscordScannerMatch[]) {
+    if (!matches.length || !this.client || !config.discordChannelId) return;
+
+    const ch = await this.client.channels.fetch(config.discordChannelId);
+    if (!ch || !ch.isTextBased() || !('send' in ch)) return;
+
+    const lines = ['[SCANNER] New matches', ''];
+
+    for (const match of matches.slice(0, 25)) {
+      lines.push(
+        [
+          `${match.type}: \`${match.value}\``,
+          match.path ? `path=${match.path}` : '',
+          `source=${match.source}`,
+          `sender=${match.sender || 'unknown'}`,
+          `chat=${match.chat || 'unknown'}`,
+        ].filter(Boolean).join(' | '),
+      );
+    }
+
+    if (matches.length > 25) {
+      lines.push(`...and ${matches.length - 25} more`);
+    }
+
+    await ch.send(lines.join('\n').slice(0, 1900));
+
+    appendHistory({
+      ts: Date.now(),
+      direction: 'scanner',
+      discordChannelId: config.discordChannelId,
+      text: lines.join('\n'),
+    });
+  }
+
   async fromWA(sender: string, name: string, text: string) {
     if (!this.client || !config.discordChannelId || (config.discordTarget && sender === '')) return;
     const ch = await this.client.channels.fetch(config.discordChannelId);
