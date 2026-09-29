@@ -21,6 +21,7 @@ export class DiscordBridge {
   client: Client | null = null;
   private readyPromise: Promise<void> | null = null;
   private readyResolve: (() => void) | null = null;
+  private lastWaCommandText = '';
 
   constructor(private sendWA: (jid: string, text: string) => Promise<void>) {}
 
@@ -130,6 +131,10 @@ export class DiscordBridge {
           text,
         );
 
+        // Suppress only the outbound command echo. Bot replies such as
+        // !help output are allowed through to Discord.
+        this.lastWaCommandText = text;
+
         appendHistory({
           ts: Date.now(),
           direction: 'discord',
@@ -214,8 +219,13 @@ export class DiscordBridge {
     const senderNumber = digits(sender);
 
     if (botNumber && senderNumber && botNumber === senderNumber) {
-      console.log(chalk.gray('[DISCORD]'), chalk.bold('SUPPRESSED'), chalk.gray('bot-originated WhatsApp echo'));
-      return;
+      if (text.trim() === this.lastWaCommandText.trim()) {
+        console.log(chalk.gray('[DISCORD]'), chalk.bold('SUPPRESSED'), chalk.gray('outbound !wa echo'));
+        this.lastWaCommandText = '';
+        return;
+      }
+
+      console.log(chalk.green('[DISCORD]'), chalk.bold('BOT REPLY'), chalk.white(text.slice(0, 120)));
     }
 
     if (config.discordWebhookUrl) {
