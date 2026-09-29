@@ -102,7 +102,7 @@ function isOwner(jid: string) {
   const incoming = jidNumber(jid);
 
   if (!incoming) {
-    console.log(chalk.red(`[OWNER] empty sender JID: \${jid}`));
+    console.log(chalk.red(`[OWNER] empty sender JID: ${jid}`));
     return false;
   }
 
@@ -114,8 +114,8 @@ function isOwner(jid: string) {
 
   console.log(
     matched
-      ? chalk.green(`[OWNER] authorized \${incoming}`)
-      : chalk.red(`[OWNER] denied \${incoming} owners=\${owners.join(',')}`)
+      ? chalk.green(`[OWNER] authorized ${incoming}`)
+      : chalk.red(`[OWNER] denied ${incoming} owners=${owners.join(',')}`)
   );
 
   return matched;
@@ -1375,8 +1375,8 @@ async function connect() {
                     text: info(
                       '🔓 HAT DECRYPT',
                       [
-                        `Status : \${decryptEnabled() ? 'ON' : 'OFF'}`,
-                        `Log file : \${decryptLogFile()}`,
+                        `Status : ${decryptEnabled() ? 'ON' : 'OFF'}`,
+                        `Log file : ${decryptLogFile()}`,
                       ],
                     ),
                   },
@@ -1473,9 +1473,13 @@ async function connect() {
               if (!decrypted) {
                 await commandReply({
                   
-                    text:
-                      'Reply to a .hat file with ' +
-                      `${config.prefix}decrypt.`,
+                    text: error(
+                      '🔐 HAT DECRYPT',
+                      [
+                        'No .hat document found.',
+                        `Reply to a .hat file with ${config.prefix}decrypt.`,
+                      ],
+                    ),
                   },
                 );
               }
@@ -1542,9 +1546,10 @@ async function connect() {
               if (action === 'file') {
                 await commandReply({
                   
-                    text:
-                      'Scanner file:\n' +
-                      scannerFile(),
+                    text: info(
+                      '🔎 SCANNER FILE',
+                      [scannerFile()],
+                    ),
                   },
                 );
 
@@ -1559,10 +1564,12 @@ async function connect() {
 
                 await commandReply({
                   
-                    text:
+                    text: info(
+                      '🔎 SCANNER LOGS',
                       lines.length
-                        ? lines.join('\n')
-                        : 'No scanner matches.',
+                        ? lines
+                        : ['No scanner matches.'],
+                    ),
                   },
                 );
 
@@ -1574,13 +1581,13 @@ async function connect() {
                   text: info(
                   '🔎 SCANNER STATUS',
                   [
-                    `Enabled : \${scannerEnabled ? 'YES' : 'NO'}`,
+                    `Enabled : ${scannerEnabled ? 'YES' : 'NO'}`,
                     '',
-                    `\${config.prefix}scan on`,
-                    `\${config.prefix}scan off`,
-                    `\${config.prefix}scan logs`,
-                    `\${config.prefix}scan clear`,
-                    `\${config.prefix}scan file`,
+                    `${config.prefix}scan on`,
+                    `${config.prefix}scan off`,
+                    `${config.prefix}scan logs`,
+                    `${config.prefix}scan clear`,
+                    `${config.prefix}scan file`,
                   ],
                 ),
                 },
