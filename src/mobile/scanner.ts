@@ -31,7 +31,29 @@ function ensure() {
 }
 
 function cleanUrl(value: string) {
-  return value.replace(/[),.;!?]+$/g, '');
+  const cleaned = value.replace(/[),.;!?]+$/g, '');
+
+  try {
+    const url = new globalThis.URL(cleaned);
+
+    // Keep the scheme + host and only the first 3
+    // path segments. Query strings and fragments are dropped.
+    const segments = url.pathname
+      .split('/')
+      .filter(Boolean)
+      .slice(0, 3);
+
+    url.pathname = segments.length
+      ? '/' + segments.join('/') + '/'
+      : '/';
+
+    url.search = '';
+    url.hash = '';
+
+    return url.toString();
+  } catch {
+    return cleaned;
+  }
 }
 
 function unique(values: string[]) {
