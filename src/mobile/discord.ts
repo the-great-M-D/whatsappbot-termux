@@ -34,9 +34,15 @@ export class DiscordBridge {
     if (!config.discordToken) return console.log('[DISCORD] disabled (no DISCORD_TOKEN)');
     if (this.client) return;
 
-    // Only request the non-privileged intent needed for Discord server/channel access.
-    // MessageContent is intentionally not requested because it is a privileged intent.
-    this.client = new Client({ intents: [GatewayIntentBits.Guilds] });
+    // MessageContent is required for the Discord !wa command.
+    // Enable it under Discord Developer Portal -> Bot -> Privileged Gateway Intents.
+    this.client = new Client({
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+      ],
+    });
 
     this.readyPromise = new Promise<void>(resolve => {
       this.readyResolve = resolve;
@@ -46,6 +52,43 @@ export class DiscordBridge {
       console.log('[DISCORD] connected');
       this.readyResolve?.();
       this.readyResolve = null;
+    });
+
+    this.client.on('messageCreate', async (m: Message) => {
+      try {
+        if (m.author.bot || m.channelId !== config.discordChannelId || !m.content.startsWith(config.prefix)) return;
+
+        const [cmd, ...rest] = m.content
+          .slice(config.prefix.length)
+          .trim()
+          .split(/\s+/);
+
+        if (cmd.toLowerCase() !== 'wa') return;
+        if (!config.discordAllowed.includes(m.author.id)) return void m.reply('Not authorized.');
+        if (!config.discordTarget) return void m.reply('DISCORD_WA_TARGET is not configured.');
+
+        const text = rest.join(' ').trim();
+        if (!text) return void m.reply('Usage: !wa <message>');
+
+        await this.sendWA(
+          config.discordTarget,
+          '[Discord] ' + m.author.displayName + ': ' + text,
+        );
+
+        appendHistory({
+          ts: Date.now(),
+          direction: 'discord',
+          whatsappJid: config.discordTarget,
+          discordUserId: m.author.id,
+          discordUser: m.author.displayName,
+          discordChannelId: m.channelId,
+          text,
+        });
+
+        await m.react('✅');
+      } catch (e) {
+        console.error('[DISCORD] message error:', e);
+      }
     });
 
     await this.client.login(config.discordToken);
