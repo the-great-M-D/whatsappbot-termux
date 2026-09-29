@@ -1470,7 +1470,6 @@ async function connect() {
              * quoted message so Discord receives the context too.
              */
             if (
-              !M.key.fromMe &&
               config.discordTarget &&
               M.key.remoteJid ===
                 config.discordTarget
