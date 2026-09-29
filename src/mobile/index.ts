@@ -1211,9 +1211,24 @@ async function connect() {
              * including when the command was issued inside a group.
              */
             const commandReply = async (content: any) => {
+              let payload =
+                typeof content === 'string'
+                  ? { text: content }
+                  : { ...content };
+
+              if (
+                typeof payload.text === 'string' &&
+                !payload.text.includes('╭━━━')
+              ) {
+                payload.text = info(
+                  '🤖 BOT RESPONSE',
+                  payload.text.split('\n'),
+                );
+              }
+
               await currentSock.sendMessage(
                 M.key.remoteJid!,
-                typeof content === 'string' ? { text: content } : content,
+                payload,
                 { quoted: M },
               );
             };
