@@ -1221,7 +1221,7 @@ async function connect() {
                 !payload.text.includes('╭━━━')
               ) {
                 payload.text = info(
-                  '🤖 BOT RESPONSE',
+                  '🤖 M_D TOOL',
                   payload.text.split('\n'),
                 );
               }
@@ -1242,7 +1242,7 @@ async function connect() {
             ) {
               await commandReply(
                 success(
-                  '🟢 BOT ONLINE',
+                  '🟢 M_D TOOL ONLINE',
                   [
                     'Status : Connected',
                     'WhatsApp : Ready',
@@ -1260,7 +1260,7 @@ async function connect() {
               await commandReply({
                 
                   text: box(
-                    '📖 BOT HELP',
+                    '📖 M_D TOOL HELP',
                     [
                       'GENERAL',
                       `${config.prefix}help  — show commands`,
@@ -2026,7 +2026,7 @@ async function startup() {
   );
   console.log(
     chalk.cyan(
-      ' WhatsApp Bot — Termux Mobile',
+      ' M_D TOOL — Termux Mobile',
     ),
   );
   console.log(
