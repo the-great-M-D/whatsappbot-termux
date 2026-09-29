@@ -91,9 +91,11 @@ export class DiscordBridge {
         const text = rest.join(' ').trim();
         if (!text) return void m.reply('Usage: !wa <message>');
 
+        // Send only the command text to WhatsApp.
+        // The Discord username is kept in history, not injected into the WA message.
         await this.sendWA(
           config.discordTarget,
-          '[Discord] ' + m.author.displayName + ': ' + text,
+          text,
         );
 
         appendHistory({
