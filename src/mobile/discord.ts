@@ -1,4 +1,5 @@
 import { Client, GatewayIntentBits, Message } from 'discord.js';
+import chalk from 'chalk';
 import { appendHistory } from './state.js';
 import { config } from './config.js';
 
@@ -12,6 +13,9 @@ export type DiscordScannerMatch = {
 };
 
 const digits = (value: string) => String(value || '').replace(/[^0-9]/g, '');
+
+const dlog = (label: string, message: string) =>
+  console.log(chalk.cyan('[DISCORD]'), chalk.bold(label), message);
 
 export class DiscordBridge {
   client: Client | null = null;
@@ -46,20 +50,32 @@ export class DiscordBridge {
       });
 
       if (!response.ok) {
-        console.error(`[DISCORD] webhook HTTP ${response.status}: ${await response.text()}`);
+        console.error(
+          chalk.red('[DISCORD]'),
+          chalk.bold('WEBHOOK ERROR'),
+          chalk.yellow(`HTTP ${response.status}:`),
+          await response.text(),
+        );
         return false;
       }
 
+      dlog(chalk.green('WEBHOOK'), 'sent');
       return true;
     } catch (error) {
-      console.error('[DISCORD] webhook error:', error);
+      console.error(chalk.red('[DISCORD]'), chalk.bold('WEBHOOK ERROR'), error);
       return false;
     }
   }
 
   async start() {
-    if (!config.discordToken) return console.log('[DISCORD] disabled (no DISCORD_TOKEN)');
+    if (!config.discordToken) {
+      console.log(chalk.yellow('[DISCORD]'), chalk.bold('DISABLED'), chalk.gray('(no DISCORD_TOKEN)'));
+      return;
+    }
+
     if (this.client) return;
+
+    console.log(chalk.cyan('[DISCORD]'), chalk.bold('STARTING'), chalk.gray('connecting to Discord...'));
 
     this.client = new Client({
       intents: [
@@ -74,7 +90,7 @@ export class DiscordBridge {
     });
 
     this.client.on('ready', () => {
-      console.log('[DISCORD] connected');
+      console.log(chalk.green('[DISCORD]'), chalk.bold('CONNECTED'));
       this.readyResolve?.();
       this.readyResolve = null;
     });
@@ -85,11 +101,27 @@ export class DiscordBridge {
 
         const [cmd, ...rest] = m.content.slice(config.prefix.length).trim().split(/\s+/);
         if (cmd.toLowerCase() !== 'wa') return;
-        if (!config.discordAllowed.includes(m.author.id)) return void m.reply('Not authorized.');
+
+        if (!config.discordAllowed.includes(m.author.id)) {
+          console.log(
+            chalk.red('[DISCORD]'),
+            chalk.bold('DENIED'),
+            chalk.gray(`!wa from ${m.author.tag} (${m.author.id})`),
+          );
+          return void m.reply('Not authorized.');
+        }
+
         if (!config.discordTarget) return void m.reply('DISCORD_WA_TARGET is not configured.');
 
         const text = rest.join(' ').trim();
         if (!text) return void m.reply('Usage: !wa <message>');
+
+        console.log(
+          chalk.blue('[DISCORD]'),
+          chalk.bold('!WA'),
+          chalk.white(`from ${m.author.displayName}:`),
+          chalk.green(text),
+        );
 
         // Send only the command text to WhatsApp.
         // The Discord username is kept in history, not injected into the WA message.
@@ -109,8 +141,9 @@ export class DiscordBridge {
         });
 
         await m.react('✅');
+        dlog(chalk.green('!WA OK'), 'sent to WhatsApp');
       } catch (e) {
-        console.error('[DISCORD] message error:', e);
+        console.error(chalk.red('[DISCORD]'), chalk.bold('MESSAGE ERROR'), e);
       }
     });
 
@@ -119,6 +152,12 @@ export class DiscordBridge {
 
   async scanner(matches: DiscordScannerMatch[]) {
     if (!matches.length) return;
+
+    console.log(
+      chalk.magenta('[DISCORD]'),
+      chalk.bold('SCANNER'),
+      chalk.white(`${matches.length} match(es) -> Discord`),
+    );
 
     const lines = ['[SCANNER] New matches', ''];
 
@@ -149,7 +188,7 @@ export class DiscordBridge {
     if (!this.client.isReady()) {
       const ready = await this.waitUntilReady();
       if (!ready) {
-        console.error('[DISCORD] scanner skipped: Discord client is not ready.');
+        console.error(chalk.red('[DISCORD]'), chalk.bold('SCANNER SKIPPED'), chalk.gray('Discord client is not ready.'));
         return;
       }
     }
@@ -164,6 +203,8 @@ export class DiscordBridge {
       discordChannelId: config.discordChannelId,
       text,
     });
+
+    dlog(chalk.magenta('SCANNER OK'), 'sent');
   }
 
   async fromWA(sender: string, name: string, text: string) {
@@ -173,7 +214,7 @@ export class DiscordBridge {
     const senderNumber = digits(sender);
 
     if (botNumber && senderNumber && botNumber === senderNumber) {
-      console.log('[DISCORD] suppressed bot-originated WhatsApp echo');
+      console.log(chalk.gray('[DISCORD]'), chalk.bold('SUPPRESSED'), chalk.gray('bot-originated WhatsApp echo'));
       return;
     }
 
@@ -187,6 +228,7 @@ export class DiscordBridge {
         discordChannelId: config.discordChannelId,
         text,
       });
+      dlog(chalk.green('WA -> WEBHOOK'), chalk.white(name));
       return;
     }
 
@@ -195,7 +237,7 @@ export class DiscordBridge {
     if (!this.client.isReady()) {
       const ready = await this.waitUntilReady();
       if (!ready) {
-        console.error('[DISCORD] WhatsApp forward skipped: Discord client is not ready.');
+        console.error(chalk.red('[DISCORD]'), chalk.bold('WA FORWARD SKIPPED'), chalk.gray('Discord client is not ready.'));
         return;
       }
     }
@@ -203,6 +245,7 @@ export class DiscordBridge {
     const ch = await this.client.channels.fetch(config.discordChannelId);
     if (!ch || !ch.isTextBased() || !('send' in ch)) return;
     await ch.send('[WhatsApp] ' + name + ': ' + text);
+
     appendHistory({
       ts: Date.now(),
       direction: 'whatsapp',
@@ -211,5 +254,7 @@ export class DiscordBridge {
       discordChannelId: config.discordChannelId,
       text,
     });
+
+    dlog(chalk.green('WA -> DISCORD'), chalk.white(name));
   }
 }
