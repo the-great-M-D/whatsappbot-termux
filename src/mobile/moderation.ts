@@ -40,12 +40,38 @@ function identityVariants(value: unknown): string[] {
 }
 
 export function target(M: any): string {
-  return (
-    M.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] ||
-    M.message?.extendedTextMessage?.contextInfo?.participant ||
-    M.key?.participant ||
-    ''
-  );
+  const context =
+    M.message?.extendedTextMessage?.contextInfo;
+
+  const mentioned =
+    context?.mentionedJid?.[0];
+
+  if (mentioned) {
+    console.log('[MOD] target mention:', mentioned);
+    return mentioned;
+  }
+
+  /*
+   * contextInfo.participant is only a valid
+   * moderation target when this command actually
+   * quotes/replies to another message.
+   *
+   * Without quotedMessage, Baileys can expose
+   * participant data belonging to the command
+   * itself, which can make the tool think it is
+   * targeting an admin.
+   */
+  if (context?.quotedMessage && context?.participant) {
+    console.log('[MOD] target reply:', context.participant);
+    return String(context.participant);
+  }
+
+  const fallback = M.key?.participant || '';
+  if (fallback) {
+    console.log('[MOD] target fallback:', fallback);
+  }
+
+  return fallback;
 }
 
 export function isAdmin(meta: GroupMetadata, jid: string) {
@@ -128,6 +154,8 @@ export async function moderate(
   if (!t) {
     return void M.reply('Reply to a user or @mention them.');
   }
+
+  console.log('[MOD] target resolved:', t);
 
   if (isAdmin(meta, t)) {
     return void M.reply('I will not moderate a group admin.');
