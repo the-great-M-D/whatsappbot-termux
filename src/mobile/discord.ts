@@ -30,12 +30,35 @@ export class DiscordBridge {
     return this.client?.isReady() === true;
   }
 
+  async webhook(text: string) {
+    if (!config.discordWebhookUrl || !text.trim()) return false;
+
+    try {
+      const response = await fetch(config.discordWebhookUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          username: 'WhatsApp Bot',
+          content: text.slice(0, 1900),
+        }),
+      });
+
+      if (!response.ok) {
+        console.error(`[DISCORD] webhook HTTP ${response.status}: ${await response.text()}`);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('[DISCORD] webhook error:', error);
+      return false;
+    }
+  }
+
   async start() {
     if (!config.discordToken) return console.log('[DISCORD] disabled (no DISCORD_TOKEN)');
     if (this.client) return;
 
-    // MessageContent is required for the Discord !wa command.
-    // Enable it under Discord Developer Portal -> Bot -> Privileged Gateway Intents.
     this.client = new Client({
       intents: [
         GatewayIntentBits.Guilds,
@@ -58,11 +81,7 @@ export class DiscordBridge {
       try {
         if (m.author.bot || m.channelId !== config.discordChannelId || !m.content.startsWith(config.prefix)) return;
 
-        const [cmd, ...rest] = m.content
-          .slice(config.prefix.length)
-          .trim()
-          .split(/\s+/);
-
+        const [cmd, ...rest] = m.content.slice(config.prefix.length).trim().split(/\s+/);
         if (cmd.toLowerCase() !== 'wa') return;
         if (!config.discordAllowed.includes(m.author.id)) return void m.reply('Not authorized.');
         if (!config.discordTarget) return void m.reply('DISCORD_WA_TARGET is not configured.');
@@ -95,18 +114,7 @@ export class DiscordBridge {
   }
 
   async scanner(matches: DiscordScannerMatch[]) {
-    if (!matches.length || !this.client || !config.discordChannelId) return;
-
-    if (!this.client.isReady()) {
-      const ready = await this.waitUntilReady();
-      if (!ready) {
-        console.error('[DISCORD] scanner skipped: Discord client is not ready.');
-        return;
-      }
-    }
-
-    const ch = await this.client.channels.fetch(config.discordChannelId);
-    if (!ch || !ch.isTextBased() || !('send' in ch)) return;
+    if (!matches.length) return;
 
     const lines = ['[SCANNER] New matches', ''];
 
@@ -122,21 +130,52 @@ export class DiscordBridge {
       );
     }
 
-    if (matches.length > 25) {
-      lines.push(`...and ${matches.length - 25} more`);
+    if (matches.length > 25) lines.push(`...and ${matches.length - 25} more`);
+
+    const text = lines.join('\n');
+
+    if (config.discordWebhookUrl) {
+      await this.webhook(text);
+      appendHistory({ ts: Date.now(), direction: 'scanner', discordChannelId: config.discordChannelId, text });
+      return;
     }
 
-    await ch.send(lines.join('\n').slice(0, 1900));
+    if (!this.client || !config.discordChannelId) return;
+
+    if (!this.client.isReady()) {
+      const ready = await this.waitUntilReady();
+      if (!ready) {
+        console.error('[DISCORD] scanner skipped: Discord client is not ready.');
+        return;
+      }
+    }
+
+    const ch = await this.client.channels.fetch(config.discordChannelId);
+    if (!ch || !ch.isTextBased() || !('send' in ch)) return;
+    await ch.send(text.slice(0, 1900));
 
     appendHistory({
       ts: Date.now(),
       direction: 'scanner',
       discordChannelId: config.discordChannelId,
-      text: lines.join('\n'),
+      text,
     });
   }
 
   async fromWA(sender: string, name: string, text: string) {
+    if (config.discordWebhookUrl) {
+      await this.webhook('[WhatsApp] ' + name + ': ' + text);
+      appendHistory({
+        ts: Date.now(),
+        direction: 'whatsapp',
+        whatsappJid: sender,
+        whatsappSender: name,
+        discordChannelId: config.discordChannelId,
+        text,
+      });
+      return;
+    }
+
     if (!this.client || !config.discordChannelId || (config.discordTarget && sender === '')) return;
 
     if (!this.client.isReady()) {
