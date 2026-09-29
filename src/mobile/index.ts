@@ -1417,7 +1417,7 @@ async function connect() {
                       `${config.prefix}scan file`,
                       `${config.prefix}scan clear`,
                       '',
-                      '🔓 HAT DECRYPT',
+                      '🔓 CONFIG DECRYPT',
                       `${config.prefix}decrypt`,
                       `${config.prefix}decrypt on`,
                       `${config.prefix}decrypt off`,
@@ -1490,7 +1490,7 @@ async function connect() {
                 await commandReply({
                   
                     text: success(
-                      '🔓 HAT DECRYPT',
+                      '🔓 CONFIG DECRYPT',
                       [
                         'Status : ON',
                         'Automatic decryption enabled.',
@@ -1511,7 +1511,7 @@ async function connect() {
                 await commandReply({
                   
                     text: warning(
-                      '🔓 HAT DECRYPT',
+                      '🔓 CONFIG DECRYPT',
                       [
                         'Status : OFF',
                         'Automatic decryption disabled.',
@@ -1530,7 +1530,7 @@ async function connect() {
                 await commandReply({
                   
                     text: info(
-                      '🔓 HAT DECRYPT',
+                      '🔓 CONFIG DECRYPT',
                       [
                         `Status : ${decryptEnabled() ? 'ON' : 'OFF'}`,
                         `Log file : ${decryptLogFile()}`,
@@ -1600,7 +1600,7 @@ async function connect() {
                 await commandReply({
                   
                     text: warning(
-                      '🔓 HAT DECRYPT',
+                      '🔓 CONFIG DECRYPT',
                       [
                         'Status : OFF',
                         `Use ${config.prefix}decrypt on first.`,
