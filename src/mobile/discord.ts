@@ -11,6 +11,8 @@ export type DiscordScannerMatch = {
   path?: string;
 };
 
+const digits = (value: string) => String(value || '').replace(/[^0-9]/g, '');
+
 export class DiscordBridge {
   client: Client | null = null;
   private readyPromise: Promise<void> | null = null;
@@ -163,6 +165,16 @@ export class DiscordBridge {
   }
 
   async fromWA(sender: string, name: string, text: string) {
+    // Do not echo messages sent by the WhatsApp bot itself back into Discord.
+    // This prevents !wa from producing a Discord command + webhook echo pair.
+    const botNumber = digits(config.phone);
+    const senderNumber = digits(sender);
+
+    if (botNumber && senderNumber && botNumber === senderNumber) {
+      console.log('[DISCORD] suppressed bot-originated WhatsApp echo');
+      return;
+    }
+
     if (config.discordWebhookUrl) {
       await this.webhook('[WhatsApp] ' + name + ': ' + text);
       appendHistory({
