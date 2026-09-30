@@ -1026,7 +1026,7 @@ export function scanValueObject(
 function existingKey(
   match: ScanMatch,
 ) {
-  return `${match.type}:${match.value}:${match.path || ''}`;
+  return `${match.type}:${match.value}:${match.path || ''}:${match.chat || ''}`;
 }
 
 /*
@@ -1112,7 +1112,7 @@ export function saveMatches(
           item.value
         ) {
           existing.add(
-            `${item.type}:${item.value}:${item.path || ''}`,
+            `${item.type}:${item.value}:${item.path || ''}:${item.chat || ''}`,
           );
         }
       } catch {}
