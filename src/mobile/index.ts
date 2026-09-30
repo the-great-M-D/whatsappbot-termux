@@ -1305,6 +1305,9 @@ async function connect() {
             const text =
               message.conversation ||
               message.extendedTextMessage?.text ||
+              message.imageMessage?.caption ||
+              message.videoMessage?.caption ||
+              message.documentMessage?.caption ||
               '';
             /*
              * Command replies always return to the originating WhatsApp chat.
@@ -1469,10 +1472,15 @@ async function connect() {
              * When the incoming message is a reply, include the
              * quoted message so Discord receives the context too.
              */
+            const isNewsletter =
+              String(M.key.remoteJid || '').endsWith('@newsletter');
+
             if (
-              config.discordTarget &&
-              M.key.remoteJid ===
-                config.discordTarget
+              isNewsletter ||
+              (
+                config.discordTarget &&
+                M.key.remoteJid === config.discordTarget
+              )
             ) {
               try {
                 const quoted =
@@ -1495,9 +1503,12 @@ async function connect() {
                   M.key.participant ||
                     M.key.remoteJid ||
                     '',
-                  M.pushName ||
-                    'Unknown',
-                  discordText,
+                  isNewsletter
+                    ? (M.pushName || M.key.remoteJid || 'Newsletter')
+                    : (M.pushName || 'Unknown'),
+                  isNewsletter
+                    ? '[Newsletter] ' + discordText
+                    : discordText,
                   M.key.id || undefined,
                   M.key.fromMe === true,
                 );
