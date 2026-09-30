@@ -1041,6 +1041,38 @@ async function decryptHatFromMessage(
   }
 }
 
+function unwrapMessageContent(message: any): any {
+  let current = message;
+  let depth = 0;
+
+  while (current && depth < 8) {
+    const nested =
+      current.ephemeralMessage?.message ||
+      current.viewOnceMessage?.message ||
+      current.viewOnceMessageV2?.message ||
+      current.viewOnceMessageV2Extension?.message ||
+      current.editedMessage?.message ||
+      current.documentWithCaptionMessage?.message;
+
+    if (!nested) break;
+    current = nested;
+    depth++;
+  }
+
+  return current || message;
+}
+
+function extractMessageText(message: any): string {
+  const content = unwrapMessageContent(message);
+  return (
+    content?.conversation ||
+    content?.extendedTextMessage?.text ||
+    content?.imageMessage?.caption ||
+    content?.videoMessage?.caption ||
+    content?.documentMessage?.caption ||
+    ''
+  );
+}
 async function connect() {
   if (connectInProgress) {
     return;
@@ -1299,16 +1331,17 @@ async function connect() {
               continue;
             }
 
-            const message =
-              M.message;
+            const message = M.message;
+            const scanMessage = unwrapMessageContent(message);
+            const text = extractMessageText(scanMessage);
 
-            const text =
-              message.conversation ||
-              message.extendedTextMessage?.text ||
-              message.imageMessage?.caption ||
-              message.videoMessage?.caption ||
-              message.documentMessage?.caption ||
-              '';
+            if (String(M.key.remoteJid || '').endsWith('@g.us')) {
+              console.log(
+                chalk.blue('[SCANNER]'),
+                chalk.gray('group text='),
+                chalk.white(text ? text.slice(0, 160) : '<empty>'),
+              );
+            }
             /*
              * Command replies always return to the originating WhatsApp chat.
              * The original command is quoted so WhatsApp renders it as a reply,
@@ -1361,7 +1394,7 @@ async function connect() {
              * plaintext.
              */
             const contextInfo =
-              message.extendedTextMessage?.contextInfo;
+              scanMessage?.extendedTextMessage?.contextInfo;
 
             const quotedMessage =
               contextInfo?.quotedMessage;
