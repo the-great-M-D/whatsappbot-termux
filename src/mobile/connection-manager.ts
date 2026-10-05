@@ -48,6 +48,8 @@ export function createConnectionManager(deps: ConnectionManagerDeps) {
     | ((sock: ReturnType<typeof makeWASocket>, M: any) => Promise<void>)
     | null = null;
 
+  const getWaState = () => state.waState;
+
   const setMessageHandler = (
     handler: (sock: ReturnType<typeof makeWASocket>, M: any) => Promise<void>,
   ) => {
@@ -377,7 +379,7 @@ export function createConnectionManager(deps: ConnectionManagerDeps) {
           state.sock === currentSock &&
           !auth.creds.registered
         ) {
-          if (state.sock !== currentSock || state.getWaState?.() === 'connected') break;
+          if (state.sock !== currentSock || getWaState() === 'connected') break;
           await deps.sleep(500);
         }
 
