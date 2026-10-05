@@ -932,7 +932,7 @@ const commandRouter = createCommandRouter({
       reconnectTimer = null;
     }
   },
-  setSocket: value => {
+  setSocket: (value: ReturnType<typeof makeWASocket> | null) => {
     sock = value;
   },
   sleep,
@@ -943,6 +943,8 @@ const commandRouter = createCommandRouter({
   },
   uptime,
   reportError,
+  decryptEnabled: decrypt.decryptEnabled,
+  decryptLogFile: decrypt.decryptLogFile,
   enforceMute,
   clearMatches,
   readMatches,
