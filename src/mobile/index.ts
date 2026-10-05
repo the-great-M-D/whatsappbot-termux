@@ -868,7 +868,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
 
     const plaintext = result.output;
 
-    await scanAndNotify(
+    scanAndNotify(
       plaintext,
       'HC decrypted',
       M.key.remoteJid || '',
@@ -1015,7 +1015,7 @@ async function decryptHatFromMessage(
      * direct messages and group messages because
      * the original message JID is preserved.
      */
-    await scanAndNotify(
+    scanAndNotify(
       plaintext,
       'HAT decrypted',
       M.key.remoteJid || '',
@@ -1384,6 +1384,30 @@ async function handleWhatsAppMessage(
 ) {
   try {
     try {
+                if (config.ignoreOfflineMessages) {
+                  const rawTimestamp = M.messageTimestamp;
+                  const messageTimestamp =
+                    typeof rawTimestamp === 'number'
+                      ? rawTimestamp
+                      : Number(rawTimestamp?.low ?? rawTimestamp ?? 0);
+
+                  /*
+                   * Backlog messages are discarded before message type
+                   * inspection, text extraction, scanner dispatch, logging,
+                   * command work, or Discord forwarding.
+                   */
+                  if (
+                    messageTimestamp > 0 &&
+                    messageTimestamp < messageCutoffUnix
+                  ) {
+                    return;
+                  }
+                }
+
+                if (!M.message) {
+                  return;
+                }
+
                 console.log(
                   chalk.magenta(
                     `[MSG] received jid=${M.key.remoteJid || 'unknown'} ` +
@@ -1392,43 +1416,10 @@ async function handleWhatsAppMessage(
                   )
                 );
     
-                if (!M.message) {
-                  return;
-                }
-    
-                if (config.ignoreOfflineMessages) {
-                  const rawTimestamp = M.messageTimestamp;
-                  const messageTimestamp =
-                    typeof rawTimestamp === 'number'
-                      ? rawTimestamp
-                      : Number(rawTimestamp?.low ?? rawTimestamp ?? 0);
-    
-                  if (
-                    messageTimestamp > 0 &&
-                    messageTimestamp < messageCutoffUnix
-                  ) {
-                    console.log(
-                      chalk.gray(
-                        '[MSG] ignored offline backlog ' +
-                        'timestamp=' + messageTimestamp +
-                        ' cutoff=' + messageCutoffUnix,
-                      ),
-                    );
-                    return;
-                  }
-                }
-    
                 const message = M.message;
                 const scanMessage = unwrapMessageContent(message);
                 const text = extractMessageText(scanMessage);
     
-                if (String(M.key.remoteJid || '').endsWith('@g.us')) {
-                  console.log(
-                    chalk.blue('[SCANNER]'),
-                    chalk.gray('group text='),
-                    chalk.white(text ? text.slice(0, 160) : '<empty>'),
-                  );
-                }
                 /*
                  * Command replies always return to the originating WhatsApp chat.
                  * The original command is quoted so WhatsApp renders it as a reply,
@@ -1464,7 +1455,7 @@ async function handleWhatsAppMessage(
                  * it does not connect to or probe them.
                  */
                 if (text) {
-                  await scanAndNotify(
+                  scanAndNotify(
                     text,
                     'WhatsApp',
                     M.key.remoteJid || '',
@@ -1494,7 +1485,7 @@ async function handleWhatsAppMessage(
                   '';
     
                 if (quotedText.trim()) {
-                  await scanAndNotify(
+                  scanAndNotify(
                     quotedText,
                     'WhatsApp reply/quoted message',
                     M.key.remoteJid || '',
