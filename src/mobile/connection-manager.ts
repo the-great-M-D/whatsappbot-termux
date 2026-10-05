@@ -103,7 +103,8 @@ export function createConnectionManager(deps: ConnectionManagerDeps) {
       return;
     }
 
-    if (!state.sock) return;
+    const currentSock = state.sock;
+    if (!currentSock) return;
 
     state.pairing = true;
     state.waState = 'pairing';
@@ -117,7 +118,7 @@ export function createConnectionManager(deps: ConnectionManagerDeps) {
 
       await deps.sleep(1500);
 
-      const code = await state.sock.requestPairingCode(phone);
+      const code = await currentSock.requestPairingCode(phone);
 
       console.log('');
       console.log(chalk.green('========================================'));
