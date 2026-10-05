@@ -365,7 +365,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
 
     const plaintext = result.output;
 
-    scanner.deps.scanAndNotify(
+    deps.scanAndNotify(
       plaintext,
       'HC decrypted',
       M.key.remoteJid || '',
