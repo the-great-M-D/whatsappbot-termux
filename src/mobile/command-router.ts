@@ -34,6 +34,7 @@ export type CommandRouterDeps = {
   setSocket: (value: any) => void;
   sleep: (ms: number) => Promise<void>;
   connect: () => Promise<void>;
+  resetReconnectState: () => void;
   uptime: () => string;
   reportError: (category: string, error: unknown) => Promise<void>;
 };
@@ -701,8 +702,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                       const backup =
                         deps.archiveAuth();
       
-                      deps.getStatus().pairing = false;
-                      deps.getStatus().reconnectAttempt = 0;
+                      deps.resetReconnectState();
       
                       await commandReply({
                         
@@ -710,11 +710,11 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                             ? [
                                 'Auth archived.',
                                 `Backup: ${backup}`,
-                                'Starting fresh deps.getStatus().pairing...',
+                                'Starting fresh pairing...',
                               ].join('\n')
                             : [
                                 'No existing auth found.',
-                                'Starting fresh deps.getStatus().pairing...',
+                                'Starting fresh pairing...',
                               ].join('\n'),
                         },
                       );
