@@ -71,6 +71,16 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempt = 0;
 
 /*
+ * WhatsApp 440 means the current session was replaced elsewhere.
+ * Do not loop forever if the session keeps getting replaced.
+ */
+let connectionReplacedCount = 0;
+let connectionReplacedWindowStartedAt = 0;
+let automaticReconnectBlocked = false;
+const CONNECTION_REPLACED_WINDOW_MS = 60_000;
+const CONNECTION_REPLACED_MAX = 3;
+
+/*
  * Messages older than this connection start time are treated as offline
  * backlog and ignored when IGNORE_OFFLINE_MESSAGES=true.
  */
@@ -252,6 +262,15 @@ function scheduleReconnect(reason: string) {
   }
 
   if (waState === 'connected') {
+    return;
+  }
+
+  if (automaticReconnectBlocked) {
+    console.log(
+      chalk.yellow(
+        '[WA] Automatic reconnect is blocked after repeated 440 conflicts.',
+      ),
+    );
     return;
   }
 
@@ -518,6 +537,9 @@ async function connect() {
           waState = 'connected';
           pairing = false;
           reconnectAttempt = 0;
+          connectionReplacedCount = 0;
+          connectionReplacedWindowStartedAt = 0;
+          automaticReconnectBlocked = false;
 
           lastDisconnectCode = null;
           lastDisconnectReason = '';
@@ -661,6 +683,67 @@ async function connect() {
 
           scheduleReconnect(
             '401 connection failure',
+          );
+
+          return;
+        }
+
+        if (statusCode === DisconnectReason.connectionReplaced) {
+          const now = Date.now();
+
+          if (
+            !connectionReplacedWindowStartedAt ||
+            now - connectionReplacedWindowStartedAt >
+              CONNECTION_REPLACED_WINDOW_MS
+          ) {
+            connectionReplacedWindowStartedAt = now;
+            connectionReplacedCount = 0;
+          }
+
+          connectionReplacedCount++;
+
+          console.error(
+            chalk.yellow(
+              '[AUTH] 440 connection replaced (' +
+              connectionReplacedCount +
+              '/' +
+              CONNECTION_REPLACED_MAX +
+              ').',
+            ),
+          );
+
+          console.error(
+            chalk.yellow(
+              '[AUTH] Credentials preserved; no auth reset will be performed automatically.',
+            ),
+          );
+
+          if (connectionReplacedCount >= CONNECTION_REPLACED_MAX) {
+            automaticReconnectBlocked = true;
+
+            console.error(
+              chalk.red(
+                '[AUTH] Repeated 440 conflicts detected. Automatic reconnect stopped.',
+              ),
+            );
+
+            console.error(
+              chalk.yellow(
+                '[AUTH] Check WhatsApp → Settings → Linked devices for another active session.',
+              ),
+            );
+
+            console.error(
+              chalk.yellow(
+                '[AUTH] Auth remains intact. Use !dev repair only after confirming the old session is gone.',
+              ),
+            );
+
+            return;
+          }
+
+          scheduleReconnect(
+            '440 connection replaced',
           );
 
           return;
@@ -977,6 +1060,8 @@ const commandRouter = createCommandRouter({
     waState,
     pairing,
     reconnectAttempt,
+    connectionReplacedCount,
+    automaticReconnectBlocked,
     lastDisconnectCode,
     lastDisconnectReason,
   }),
@@ -995,6 +1080,9 @@ const commandRouter = createCommandRouter({
   resetReconnectState: () => {
     pairing = false;
     reconnectAttempt = 0;
+    connectionReplacedCount = 0;
+    connectionReplacedWindowStartedAt = 0;
+    automaticReconnectBlocked = false;
   },
   uptime,
   reportError,
