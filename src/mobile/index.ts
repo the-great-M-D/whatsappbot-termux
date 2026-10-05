@@ -1383,6 +1383,113 @@ async function connect() {
       },
     );
 
+function dispatchScannerForMessage(
+  M: any,
+  scanMessage: any,
+  text: string,
+) {
+  if (text) {
+    scanAndNotify(
+      text,
+      'WhatsApp',
+      M.key.remoteJid || '',
+      M.key.participant ||
+        M.key.remoteJid ||
+        '',
+    );
+  }
+
+  const contextInfo =
+    scanMessage?.extendedTextMessage?.contextInfo;
+
+  const quotedMessage =
+    contextInfo?.quotedMessage;
+
+  const quotedText =
+    quotedMessage?.conversation ||
+    quotedMessage?.extendedTextMessage?.text ||
+    quotedMessage?.imageMessage?.caption ||
+    quotedMessage?.videoMessage?.caption ||
+    '';
+
+  if (quotedText.trim()) {
+    scanAndNotify(
+      quotedText,
+      'WhatsApp reply/quoted message',
+      M.key.remoteJid || '',
+      M.key.participant ||
+        M.key.remoteJid ||
+        '',
+    );
+  }
+}
+
+function dispatchDiscordForMessage(
+  M: any,
+  message: any,
+  text: string,
+): boolean {
+  const isNewsletter =
+    String(M.key.remoteJid || '').endsWith('@newsletter');
+
+  if (isNewsletter) {
+    void discord.fromNewsletter(
+      M.key.participant ||
+        M.key.remoteJid ||
+        '',
+      M.pushName ||
+        M.key.remoteJid ||
+        'Newsletter',
+      text,
+    ).catch(error => {
+      void reportError(
+        'discord-newsletter',
+        error,
+      );
+    });
+
+    return true;
+  }
+
+  if (
+    config.discordTarget &&
+    M.key.remoteJid === config.discordTarget
+  ) {
+    const quoted =
+      message.extendedTextMessage?.contextInfo
+        ?.quotedMessage;
+
+    const quotedText =
+      quoted?.conversation ||
+      quoted?.extendedTextMessage?.text ||
+      quoted?.imageMessage?.caption ||
+      quoted?.videoMessage?.caption ||
+      '';
+
+    const discordText =
+      quotedText.trim()
+        ? `↩️ Reply to: ${quotedText.slice(0, 700)}\\n${text}`
+        : text;
+
+    void discord.fromWA(
+      M.key.participant ||
+        M.key.remoteJid ||
+        '',
+      M.pushName || 'Unknown',
+      discordText,
+      M.key.id || undefined,
+      M.key.fromMe === true,
+    ).catch(error => {
+      void reportError(
+        'discord-bridge',
+        error,
+      );
+    });
+  }
+
+  return false;
+}
+
 async function handleWhatsAppMessage(
   currentSock: ReturnType<typeof makeWASocket>,
   M: any,
@@ -1463,51 +1570,14 @@ async function handleWhatsAppMessage(
       
       
                   /*
-                   * Passive IP/link scanner.
-                   * This only extracts values from message text;
-                   * it does not connect to or probe them.
+                   * Scanner is a separate fire-and-forget subsystem.
                    */
-                  if (text) {
-                    scanAndNotify(
-                      text,
-                      'WhatsApp',
-                      M.key.remoteJid || '',
-                      M.key.participant ||
-                        M.key.remoteJid ||
-                        '',
-                    );
-                  }
-      
-                  /*
-                   * Scan quoted/replied-to text with the same
-                   * passive scanner. Credentials remain redacted
-                   * by scanner.ts and are never forwarded in
-                   * plaintext.
-                   */
-                  const contextInfo =
-                    scanMessage?.extendedTextMessage?.contextInfo;
-      
-                  const quotedMessage =
-                    contextInfo?.quotedMessage;
-      
-                  const quotedText =
-                    quotedMessage?.conversation ||
-                    quotedMessage?.extendedTextMessage?.text ||
-                    quotedMessage?.imageMessage?.caption ||
-                    quotedMessage?.videoMessage?.caption ||
-                    '';
-      
-                  if (quotedText.trim()) {
-                    scanAndNotify(
-                      quotedText,
-                      'WhatsApp reply/quoted message',
-                      M.key.remoteJid || '',
-                      M.key.participant ||
-                        M.key.remoteJid ||
-                        '',
-                    );
-                  }
-      
+                  dispatchScannerForMessage(
+                    M,
+                    scanMessage,
+                    text,
+                  );
+
                   /*
                    * !decrypt can operate on a directly
                    * received .hat document or a reply
@@ -1589,69 +1659,19 @@ async function handleWhatsAppMessage(
                     return;
                   }
       
-                              /*
-               * Discord is a side effect, never part of the WhatsApp
-               * processing critical path. Never await network I/O here.
-               *
-               * Newsletters use a dedicated forwarding path.
-               */
-              const isNewsletter =
-                String(M.key.remoteJid || '').endsWith('@newsletter');
-
-              if (isNewsletter) {
-                void discord.fromNewsletter(
-                  M.key.participant ||
-                    M.key.remoteJid ||
-                    '',
-                  M.pushName ||
-                    M.key.remoteJid ||
-                    'Newsletter',
-                  text,
-                ).catch(error => {
-                  void reportError(
-                    'discord-newsletter',
-                    error,
-                  );
-                });
-
-                return;
-              }
-
-              if (
-                config.discordTarget &&
-                M.key.remoteJid === config.discordTarget
-              ) {
-                const quoted =
-                  message.extendedTextMessage?.contextInfo
-                    ?.quotedMessage;
-
-                const quotedText =
-                  quoted?.conversation ||
-                  quoted?.extendedTextMessage?.text ||
-                  quoted?.imageMessage?.caption ||
-                  quoted?.videoMessage?.caption ||
-                  '';
-
-                const discordText =
-                  quotedText.trim()
-                    ? `↩️ Reply to: ${quotedText.slice(0, 700)}\\n${text}`
-                    : text;
-
-                void discord.fromWA(
-                  M.key.participant ||
-                    M.key.remoteJid ||
-                    '',
-                  M.pushName || 'Unknown',
-                  discordText,
-                  M.key.id || undefined,
-                  M.key.fromMe === true,
-                ).catch(error => {
-                  void reportError(
-                    'discord-bridge',
-                    error,
-                  );
-                });
-              }
+                  /*
+                   * Discord is a separate side-effect subsystem.
+                   * Its network I/O is always detached from reception.
+                   */
+                  if (
+                    dispatchDiscordForMessage(
+                      M,
+                      message,
+                      text,
+                    )
+                  ) {
+                    return;
+                  }
 
   /*
                    * Commands.
