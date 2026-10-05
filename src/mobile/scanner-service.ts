@@ -117,7 +117,7 @@ export function createScannerService(
         .sendMessage(owner, {
           text: notificationText,
         })
-        .catch(error => {
+        .catch((error: unknown) => {
           console.error(
             chalk.gray('[SCANNER] owner notification failed:'),
             error instanceof Error
