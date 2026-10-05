@@ -61,6 +61,13 @@ let connectInProgress = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 let reconnectAttempt = 0;
+
+/*
+ * Messages older than this connection start time are treated as offline
+ * backlog and ignored when IGNORE_OFFLINE_MESSAGES=true.
+ */
+let messageCutoffUnix = 0;
+
 let lastDisconnectCode: number | null = null;
 let lastDisconnectReason = '';
 
@@ -1080,6 +1087,13 @@ async function connect() {
 
   connectInProgress = true;
 
+  /*
+   * Start a fresh message cutoff for every connection attempt.
+   * Anything WhatsApp delivers with an older timestamp was generated
+   * before this socket came online and is therefore offline backlog.
+   */
+  messageCutoffUnix = Math.floor(Date.now() / 1000);
+
   try {
     ensureDirs();
 
@@ -1329,6 +1343,28 @@ async function connect() {
 
             if (!M.message) {
               continue;
+            }
+
+            if (config.ignoreOfflineMessages) {
+              const rawTimestamp = M.messageTimestamp;
+              const messageTimestamp =
+                typeof rawTimestamp === 'number'
+                  ? rawTimestamp
+                  : Number(rawTimestamp?.low ?? rawTimestamp ?? 0);
+
+              if (
+                messageTimestamp > 0 &&
+                messageTimestamp < messageCutoffUnix
+              ) {
+                console.log(
+                  chalk.gray(
+                    '[MSG] ignored offline backlog ' +
+                    'timestamp=' + messageTimestamp +
+                    ' cutoff=' + messageCutoffUnix,
+                  ),
+                );
+                continue;
+              }
             }
 
             const message = M.message;
