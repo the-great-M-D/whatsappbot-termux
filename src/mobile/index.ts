@@ -707,7 +707,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
 
     const plaintext = result.output;
 
-    scanAndNotify(
+    scanner.scanAndNotify(
       plaintext,
       'HC decrypted',
       M.key.remoteJid || '',
@@ -852,7 +852,7 @@ async function decryptHatFromMessage(
      * direct messages and group messages because
      * the original message JID is preserved.
      */
-    scanAndNotify(
+    scanner.scanAndNotify(
       plaintext,
       'HAT decrypted',
       M.key.remoteJid || '',
@@ -1702,7 +1702,7 @@ async function handleWhatsAppMessage(
                       (args[0] || 'status').toLowerCase();
       
                     if (action === 'on') {
-                      scannerEnabled = true;
+                      scanner.setEnabled(true);
       
                       await commandReply({
                         
@@ -1714,7 +1714,7 @@ async function handleWhatsAppMessage(
                     }
       
                     if (action === 'off') {
-                      scannerEnabled = false;
+                      scanner.setEnabled(false);
       
                       await commandReply({
                         
@@ -1775,7 +1775,7 @@ async function handleWhatsAppMessage(
                         text: info(
                         '📡 SCANNER STATUS',
                         [
-                          `Enabled : ${scannerEnabled ? 'YES' : 'NO'}`,
+                          `Enabled : ${scanner.isEnabled() ? 'YES' : 'NO'}`,
                           '',
                           `${config.prefix}scan on`,
                           `${config.prefix}scan off`,
@@ -2200,8 +2200,14 @@ const discord =
     },
   );
 
+const scanner = createScannerService({
+  getSocket: () => sock,
+  owners: config.owners,
+  discord,
+});
+
 const sideEffects = createMessageSideEffects({
-  scanAndNotify,
+  scanAndNotify: scanner.scanAndNotify,
   discord,
   discordTarget: config.discordTarget,
   reportError,
