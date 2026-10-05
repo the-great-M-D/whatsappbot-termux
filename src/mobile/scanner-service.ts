@@ -138,7 +138,7 @@ export function createScannerService(
       path: match.path,
     }));
 
-    void deps.discord.scanner(discordMatches).catch(error => {
+    void deps.discord.scanner(discordMatches).catch((error: unknown) => {
       console.error(
         chalk.gray('[SCANNER] Discord notification failed:'),
         error instanceof Error
