@@ -377,7 +377,7 @@ export function createConnectionManager(deps: ConnectionManagerDeps) {
           state.sock === currentSock &&
           !auth.creds.registered
         ) {
-          if (state.waState === 'connected') break;
+          if (state.sock !== currentSock || state.getWaState?.() === 'connected') break;
           await deps.sleep(500);
         }
 
@@ -422,6 +422,7 @@ export function createConnectionManager(deps: ConnectionManagerDeps) {
   }
 
   return {
+    getWaState: () => state.waState,
     connect,
     scheduleReconnect,
     setMessageHandler,
