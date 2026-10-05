@@ -1,4 +1,3 @@
-import chalk from 'chalk';
 import type { DiscordBridge } from './discord.js';
 
 export type CommandRouterDeps = {
@@ -56,12 +55,6 @@ export function createCommandRouter(deps: CommandRouterDeps) {
     commandReply: (content: any) => Promise<void>,
   ): Promise<void> {
     const { config, info, success, warning, error, box } = deps;
-                  console.log(
-                    chalk.magenta(
-                      `[CMD] text=${JSON.stringify(text)} ` +
-                      `prefix=${JSON.stringify(config.prefix)}`
-                    )
-                  );
       
                   /*
                    * Mute enforcement happens before
