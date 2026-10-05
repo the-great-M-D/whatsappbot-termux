@@ -510,7 +510,7 @@ async function decryptHatFromMessage(
      * direct messages and group messages because
      * the original message JID is preserved.
      */
-    scanner.deps.scanAndNotify(
+    deps.scanAndNotify(
       plaintext,
       'HAT decrypted',
       M.key.remoteJid || '',
