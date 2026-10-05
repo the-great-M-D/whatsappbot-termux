@@ -1387,937 +1387,721 @@ async function handleWhatsAppMessage(
   currentSock: ReturnType<typeof makeWASocket>,
   M: any,
 ) {
-  try {
-    try {
-                if (config.ignoreOfflineMessages) {
-                  /*
-                   * With backlog filtering enabled, anything delivered
-                   * before the socket is OPEN is not admitted to the
-                   * expensive message pipeline.
-                   */
-                  if (!messageCutoffReady) {
+      try {
+                  if (config.ignoreOfflineMessages) {
+                    /*
+                     * With backlog filtering enabled, anything delivered
+                     * before the socket is OPEN is not admitted to the
+                     * expensive message pipeline.
+                     */
+                    if (!messageCutoffReady) {
+                      return;
+                    }
+
+                    const rawTimestamp = M.messageTimestamp;
+                    const messageTimestamp =
+                      typeof rawTimestamp === 'number'
+                        ? rawTimestamp
+                        : Number(rawTimestamp?.low ?? rawTimestamp ?? 0);
+
+                    /*
+                     * Backlog messages are discarded before message type
+                     * inspection, text extraction, scanner dispatch, logging,
+                     * command work, or Discord forwarding.
+                     */
+                    if (
+                      messageTimestamp > 0 &&
+                      messageTimestamp < messageCutoffUnix
+                    ) {
+                      return;
+                    }
+                  }
+
+                  if (!M.message) {
                     return;
                   }
 
-                  const rawTimestamp = M.messageTimestamp;
-                  const messageTimestamp =
-                    typeof rawTimestamp === 'number'
-                      ? rawTimestamp
-                      : Number(rawTimestamp?.low ?? rawTimestamp ?? 0);
-
-                  /*
-                   * Backlog messages are discarded before message type
-                   * inspection, text extraction, scanner dispatch, logging,
-                   * command work, or Discord forwarding.
-                   */
-                  if (
-                    messageTimestamp > 0 &&
-                    messageTimestamp < messageCutoffUnix
-                  ) {
-                    return;
-                  }
-                }
-
-                if (!M.message) {
-                  return;
-                }
-
-                console.log(
-                  chalk.magenta(
-                    `[MSG] received jid=${M.key.remoteJid || 'unknown'} ` +
-                    `fromMe=${M.key.fromMe ? 'yes' : 'no'} ` +
-                    `type=${Object.keys(M.message || {}).join(',') || 'none'}`
-                  )
-                );
-    
-                const message = M.message;
-                const scanMessage = unwrapMessageContent(message);
-                const text = extractMessageText(scanMessage);
-    
-                /*
-                 * Command replies always return to the originating WhatsApp chat.
-                 * The original command is quoted so WhatsApp renders it as a reply,
-                 * including when the command was issued inside a group.
-                 */
-                const commandReply = async (content: any) => {
-                  let payload =
-                    typeof content === 'string'
-                      ? { text: content }
-                      : { ...content };
-    
-                  if (
-                    typeof payload.text === 'string' &&
-                    !payload.text.includes('╭━━━')
-                  ) {
-                    payload.text = info(
-                      'M_D TOOL',
-                      payload.text.split('\n'),
-                    );
-                  }
-    
-                  await currentSock.sendMessage(
-                    M.key.remoteJid!,
-                    payload,
-                    { quoted: M },
+                  console.log(
+                    chalk.magenta(
+                      `[MSG] received jid=${M.key.remoteJid || 'unknown'} ` +
+                      `fromMe=${M.key.fromMe ? 'yes' : 'no'} ` +
+                      `type=${Object.keys(M.message || {}).join(',') || 'none'}`
+                    )
                   );
-                };
-    
-    
-                /*
-                 * Passive IP/link scanner.
-                 * This only extracts values from message text;
-                 * it does not connect to or probe them.
-                 */
-                if (text) {
-                  scanAndNotify(
-                    text,
-                    'WhatsApp',
-                    M.key.remoteJid || '',
-                    M.key.participant ||
-                      M.key.remoteJid ||
-                      '',
-                  );
-                }
-    
-                /*
-                 * Scan quoted/replied-to text with the same
-                 * passive scanner. Credentials remain redacted
-                 * by scanner.ts and are never forwarded in
-                 * plaintext.
-                 */
-                const contextInfo =
-                  scanMessage?.extendedTextMessage?.contextInfo;
-    
-                const quotedMessage =
-                  contextInfo?.quotedMessage;
-    
-                const quotedText =
-                  quotedMessage?.conversation ||
-                  quotedMessage?.extendedTextMessage?.text ||
-                  quotedMessage?.imageMessage?.caption ||
-                  quotedMessage?.videoMessage?.caption ||
-                  '';
-    
-                if (quotedText.trim()) {
-                  scanAndNotify(
-                    quotedText,
-                    'WhatsApp reply/quoted message',
-                    M.key.remoteJid || '',
-                    M.key.participant ||
-                      M.key.remoteJid ||
-                      '',
-                  );
-                }
-    
-                /*
-                 * !decrypt can operate on a directly
-                 * received .hat document or a reply
-                 * to a .hat document.
-                 *
-                 * We process this before the normal
-                 * text check because documents do not
-                 * necessarily contain conversation text.
-                 */
-                if (
-                  text.trim().toLowerCase() ===
-                  `${config.prefix}decrypt`
-                ) {
-                  const hat =
-                    findHatDocument(M.message) ||
-                    findQuotedHatDocument(M.message);
-    
-                  const hc =
-                    findHcDocument(M.message) ||
-                    findQuotedHcDocument(M.message);
-    
-                  let decrypted = false;
-    
-                  if (hat) {
-                    decrypted = await decryptHatFromMessage(currentSock, M);
-                    logDecrypt(
-                      'decrypt-hat',
-                      M.key.remoteJid || '',
-                      M.key.participant || M.key.remoteJid || '',
-                      decrypted,
-                    );
-                  } else if (hc) {
-                    decrypted = await decryptHcFromMessage(currentSock, M);
-                    logDecrypt(
-                      'decrypt-hc',
-                      M.key.remoteJid || '',
-                      M.key.participant || M.key.remoteJid || '',
-                      decrypted,
-                    );
-                  }
-    
-                  if (!decrypted) {
-                    await commandReply({
-                      text: error(
-                        '🔐 DECRYPT',
-                        [
-                          'No .hat or .hc document found.',
-                          `Reply to a .hat or .hc file with ${config.prefix}decrypt.`,
-                        ],
-                      ),
-                    });
-                  }
-    
-                  return;
-                }
-    
-                if (!text) {
-                  return;
-                }
-    
-                console.log(
-                  chalk.magenta(
-                    `[CMD] text=${JSON.stringify(text)} ` +
-                    `prefix=${JSON.stringify(config.prefix)}`
-                  )
-                );
-    
-                /*
-                 * Mute enforcement happens before
-                 * command processing.
-                 */
-                const muted =
-                  await enforceMute(
-                    currentSock,
-                    M,
-                  );
-    
-                if (muted) {
-                  return;
-                }
-    
-                            /*
-             * Discord is a side effect, never part of the WhatsApp
-             * processing critical path. Never await network I/O here.
-             *
-             * Newsletters use a dedicated forwarding path.
-             */
-            const isNewsletter =
-              String(M.key.remoteJid || '').endsWith('@newsletter');
-
-            if (isNewsletter) {
-              void discord.fromNewsletter(
-                M.key.participant ||
-                  M.key.remoteJid ||
-                  '',
-                M.pushName ||
-                  M.key.remoteJid ||
-                  'Newsletter',
-                text,
-              ).catch(error => {
-                void reportError(
-                  'discord-newsletter',
-                  error,
-                );
-              });
-
-              return;
-            }
-
-            if (
-              config.discordTarget &&
-              M.key.remoteJid === config.discordTarget
-            ) {
-              const quoted =
-                message.extendedTextMessage?.contextInfo
-                  ?.quotedMessage;
-
-              const quotedText =
-                quoted?.conversation ||
-                quoted?.extendedTextMessage?.text ||
-                quoted?.imageMessage?.caption ||
-                quoted?.videoMessage?.caption ||
-                '';
-
-              const discordText =
-                quotedText.trim()
-                  ? `↩️ Reply to: ${quotedText.slice(0, 700)}\\n${text}`
-                  : text;
-
-              void discord.fromWA(
-                M.key.participant ||
-                  M.key.remoteJid ||
-                  '',
-                M.pushName || 'Unknown',
-                discordText,
-                M.key.id || undefined,
-                M.key.fromMe === true,
-              ).catch(error => {
-                void reportError(
-                  'discord-bridge',
-                  error,
-                );
-              });
-            }
-
-/*
-                 * Commands.
-                 */
-                if (
-                  !text.startsWith(
-                    config.prefix,
-                  )
-                ) {
-                  return;
-                }
-    
-                const body =
-                  text.slice(
-                    config.prefix.length,
-                  ).trim();
-    
-                if (!body) {
-                  return;
-                }
-    
-                const parts =
-                  body.split(/\s+/);
-    
-                const command =
-                  (
-                    parts.shift() ||
-                    ''
-                  ).toLowerCase();
-    
-                const args = parts;
-    
-                /*
-                 * Every command is owner-only.
-                 * Non-owners are ignored silently, so the
-                 * bot does not reveal that it exists to
-                 * people who type !commands.
-                 */
-                if (
-                    !isCommandAuthorized(M)
-                  ) {
-                  return;
-                }
-    
-                /*
-                 * !hi
-                 */
-                if (
-                  command === 'hi'
-                ) {
-                  await commandReply(
-                    success(
-                      '🟢 M_D TOOL ONLINE',
-                      [
-                        'Status : Connected',
-                        'WhatsApp : Ready',
-                      ],
-                    ),
-                  );
-    
-                  return;
-                }
-    
-                /*
-                 * !help
-                 */
-                if (command === 'help') {
-                  await commandReply({
-                    
-                      text: box(
-                        '📖 M_D TOOL HELP',
-                        [
-                          'GENERAL',
-                          `${config.prefix}help  — show commands`,
-                          `${config.prefix}hi    — bot online check`,
-                          '',
-                          '📡 SCANNER',
-                          `${config.prefix}scan`,
-                          `${config.prefix}scan on`,
-                          `${config.prefix}scan off`,
-                          `${config.prefix}scan status`,
-                          `${config.prefix}scan logs`,
-                          `${config.prefix}scan file`,
-                          `${config.prefix}scan clear`,
-                          '',
-                          '🔓 CONFIG DECRYPT',
-                          `${config.prefix}decrypt`,
-                          `${config.prefix}decrypt on`,
-                          `${config.prefix}decrypt off`,
-                          `${config.prefix}decrypt status`,
-                          `${config.prefix}decrypt logs`,
-                          `${config.prefix}decrypt file`,
-                          `${config.prefix}decrypt clear`,
-                          '',
-                          '🛡 GROUP MODERATION',
-                          `${config.prefix}warn`,
-                          `${config.prefix}kick`,
-                          `${config.prefix}mute`,
-                          `${config.prefix}unmute`,
-                          `${config.prefix}warnings`,
-                          `${config.prefix}clearwarn`,
-                          `${config.prefix}add`,
-                          `${config.prefix}promote`,
-                          `${config.prefix}demote`,
-                          '',
-                          '⚙️ ADMIN / DEV',
-                          `${config.prefix}config`,
-                          `${config.prefix}dev status`,
-                          `${config.prefix}dev logs`,
-                          `${config.prefix}dev errors`,
-                          `${config.prefix}dev clearerrors`,
-                          `${config.prefix}dev sh`,
-                          `${config.prefix}dev py`,
-                          `${config.prefix}dev restart`,
-                        ],
-                      ),
-                    },
-                  );
-    
-                  return;
-                }
-    
-                /*
-                 * !decrypt
-                 */
-                if (command === 'decrypt') {
-                  if (
-                    !isCommandAuthorized(M)
-                  ) {
-                    await commandReply({
-                      
-                        text: error(
-                          '⛔ ACCESS DENIED',
-                          [
-                            'Owner permission required.',
-                          ],
-                        ),
-                      },
-                    );
-                    return;
-                  }
-    
-                  const action =
-                    (args[0] || 'decrypt').toLowerCase();
-    
+      
+                  const message = M.message;
+                  const scanMessage = unwrapMessageContent(message);
+                  const text = extractMessageText(scanMessage);
+      
                   /*
-                   * !decrypt on
+                   * Command replies always return to the originating WhatsApp chat.
+                   * The original command is quoted so WhatsApp renders it as a reply,
+                   * including when the command was issued inside a group.
                    */
-                  if (action === 'on') {
-                    setDecryptEnabled(true);
-    
-                    await commandReply({
-                      
-                        text: success(
-                          '🔓 CONFIG DECRYPT',
-                          [
-                            'Status : ON',
-                            'Automatic decryption enabled.',
-                          ],
-                        ),
-                      },
-                    );
-    
-                    return;
-                  }
-    
-                  /*
-                   * !decrypt off
-                   */
-                  if (action === 'off') {
-                    setDecryptEnabled(false);
-    
-                    await commandReply({
-                      
-                        text: warning(
-                          '🔓 CONFIG DECRYPT',
-                          [
-                            'Status : OFF',
-                            'Automatic decryption disabled.',
-                          ],
-                        ),
-                      },
-                    );
-    
-                    return;
-                  }
-    
-                  /*
-                   * !decrypt status
-                   */
-                  if (action === 'status') {
-                    await commandReply({
-                      
-                        text: info(
-                          '🔓 CONFIG DECRYPT',
-                          [
-                            `Status : ${decryptEnabled() ? 'ON' : 'OFF'}`,
-                            `Log file : ${decryptLogFile()}`,
-                          ],
-                        ),
-                      },
-                    );
-    
-                    return;
-                  }
-    
-                  /*
-                   * !decrypt logs
-                   */
-                  if (action === 'logs') {
-                    const logs = recentDecryptLogs(10);
-    
-                    await commandReply({
-                      
-                        text: info(
-                          '📜 DECRYPT LOGS',
-                          logs.length ? logs : ['No decrypt logs.'],
-                        ),
-                      },
-                    );
-    
-                    return;
-                  }
-    
-                  /*
-                   * !decrypt file
-                   */
-                  if (action === 'file') {
-                    await commandReply({
-                      
-                        text: info(
-                          '📜 DECRYPT LOG FILE',
-                          [decryptLogFile()],
-                        ),
-                      },
-                    );
-    
-                    return;
-                  }
-    
-                  /*
-                   * !decrypt clear
-                   */
-                  if (action === 'clear') {
-                    clearDecryptLogs();
-    
-                    await commandReply({
-                      
-                        text: success('📜 DECRYPT LOGS', ['Log cleared.']),
-                      },
-                    );
-    
-                    return;
-                  }
-    
-                  /*
-                   * !decrypt
-                   *
-                   * Only decrypt when explicitly enabled.
-                   */
-                  if (!decryptEnabled()) {
-                    await commandReply({
-                      
-                        text: warning(
-                          '🔓 CONFIG DECRYPT',
-                          [
-                            'Status : OFF',
-                            `Use ${config.prefix}decrypt on first.`,
-                          ],
-                        ),
-                      },
-                    );
-    
-                    return;
-                  }
-    
-                  const hat =
-                    findHatDocument(M.message) ||
-                    findQuotedHatDocument(M.message);
-    
-                  const hc =
-                    findHcDocument(M.message) ||
-                    findQuotedHcDocument(M.message);
-    
-                  let decrypted = false;
-    
-                  if (hat) {
-                    decrypted = await decryptHatFromMessage(currentSock, M);
-                    logDecrypt(
-                      'decrypt-hat',
-                      M.key.remoteJid || '',
-                      M.key.participant || M.key.remoteJid || '',
-                      decrypted,
-                    );
-                  } else if (hc) {
-                    decrypted = await decryptHcFromMessage(currentSock, M);
-                    logDecrypt(
-                      'decrypt-hc',
-                      M.key.remoteJid || '',
-                      M.key.participant || M.key.remoteJid || '',
-                      decrypted,
-                    );
-                  }
-    
-                  if (!decrypted) {
-                    await commandReply({
-                      text: error(
-                        '🔐 DECRYPT',
-                        [
-                          'No .hat or .hc document found.',
-                          `Reply to a .hat or .hc file with ${config.prefix}decrypt.`,
-                        ],
-                      ),
-                    });
-                  }
-    
-                  return;
-                }
-    
-                /*
-                 * !scan
-                 */
-                if (command === 'scan') {
-                  if (
-                    !isCommandAuthorized(M)
-                  ) {
-                    await commandReply({
-                       text: error('⛔ ACCESS DENIED', ['Owner permission required.']) },
-                    );
-                    return;
-                  }
-    
-                  const action =
-                    (args[0] || 'status').toLowerCase();
-    
-                  if (action === 'on') {
-                    scannerEnabled = true;
-    
-                    await commandReply({
-                      
-                        text: success('📡 SCANNER', ['Status : ON', 'Passive IP/URL scanning enabled.']),
-                      },
-                    );
-    
-                    return;
-                  }
-    
-                  if (action === 'off') {
-                    scannerEnabled = false;
-    
-                    await commandReply({
-                      
-                        text: warning('📡 SCANNER', ['Status : OFF', 'Passive IP/URL scanning disabled.']),
-                      },
-                    );
-    
-                    return;
-                  }
-    
-                  if (action === 'clear') {
-                    clearMatches();
-    
-                    await commandReply({
-                      
-                        text: success('📡 SCANNER', ['Saved matches cleared.']),
-                      },
-                    );
-    
-                    return;
-                  }
-    
-                  if (action === 'file') {
-                    await commandReply({
-                      
-                        text: info(
-                          '📡 SCANNER FILE',
-                          [scannerFile()],
-                        ),
-                      },
-                    );
-    
-                    return;
-                  }
-    
-                  if (action === 'logs') {
-                    const lines =
-                      readMatches(
-                        Number(args[1]) || 50,
+                  const commandReply = async (content: any) => {
+                    let payload =
+                      typeof content === 'string'
+                        ? { text: content }
+                        : { ...content };
+      
+                    if (
+                      typeof payload.text === 'string' &&
+                      !payload.text.includes('╭━━━')
+                    ) {
+                      payload.text = info(
+                        'M_D TOOL',
+                        payload.text.split('\n'),
                       );
-    
-                    await commandReply({
-                      
-                        text: info(
-                          '📡 SCANNER LOGS',
-                          lines.length
-                            ? lines
-                            : ['No scanner matches.'],
-                        ),
-                      },
+                    }
+      
+                    await currentSock.sendMessage(
+                      M.key.remoteJid!,
+                      payload,
+                      { quoted: M },
                     );
-    
-                    return;
-                  }
-    
-                  await commandReply({
-                    
-                      text: info(
-                      '📡 SCANNER STATUS',
-                      [
-                        `Enabled : ${scannerEnabled ? 'YES' : 'NO'}`,
-                        '',
-                        `${config.prefix}scan on`,
-                        `${config.prefix}scan off`,
-                        `${config.prefix}scan logs`,
-                        `${config.prefix}scan clear`,
-                        `${config.prefix}scan file`,
-                      ],
-                    ),
-                    },
-                  );
-    
-                  return;
-                }
-    
-                /*
-                 * !config
-                 */
-                if (
-                  command === 'config'
-                ) {
-                  if (
-                    !isCommandAuthorized(M)
-                  ) {
-                    await commandReply({
-                      
-                        text: error('⛔ ACCESS DENIED', ['Owner permission required.']),
-                      },
-                    );
-    
-                    return;
-                  }
-    
-                  await configCommand(
-                    {
-                      ...M,
-                      reply: async (
-                        replyText: string,
-                      ) => {
-                        await commandReply({
-                           text: replyText },
-                        );
-                      },
-                      sender:
-                        M.key.participant ||
+                  };
+      
+      
+                  /*
+                   * Passive IP/link scanner.
+                   * This only extracts values from message text;
+                   * it does not connect to or probe them.
+                   */
+                  if (text) {
+                    scanAndNotify(
+                      text,
+                      'WhatsApp',
+                      M.key.remoteJid || '',
+                      M.key.participant ||
                         M.key.remoteJid ||
                         '',
-                    },
-                    args,
+                    );
+                  }
+      
+                  /*
+                   * Scan quoted/replied-to text with the same
+                   * passive scanner. Credentials remain redacted
+                   * by scanner.ts and are never forwarded in
+                   * plaintext.
+                   */
+                  const contextInfo =
+                    scanMessage?.extendedTextMessage?.contextInfo;
+      
+                  const quotedMessage =
+                    contextInfo?.quotedMessage;
+      
+                  const quotedText =
+                    quotedMessage?.conversation ||
+                    quotedMessage?.extendedTextMessage?.text ||
+                    quotedMessage?.imageMessage?.caption ||
+                    quotedMessage?.videoMessage?.caption ||
+                    '';
+      
+                  if (quotedText.trim()) {
+                    scanAndNotify(
+                      quotedText,
+                      'WhatsApp reply/quoted message',
+                      M.key.remoteJid || '',
+                      M.key.participant ||
+                        M.key.remoteJid ||
+                        '',
+                    );
+                  }
+      
+                  /*
+                   * !decrypt can operate on a directly
+                   * received .hat document or a reply
+                   * to a .hat document.
+                   *
+                   * We process this before the normal
+                   * text check because documents do not
+                   * necessarily contain conversation text.
+                   */
+                  if (
+                    text.trim().toLowerCase() ===
+                    `${config.prefix}decrypt`
+                  ) {
+                    const hat =
+                      findHatDocument(M.message) ||
+                      findQuotedHatDocument(M.message);
+      
+                    const hc =
+                      findHcDocument(M.message) ||
+                      findQuotedHcDocument(M.message);
+      
+                    let decrypted = false;
+      
+                    if (hat) {
+                      decrypted = await decryptHatFromMessage(currentSock, M);
+                      logDecrypt(
+                        'decrypt-hat',
+                        M.key.remoteJid || '',
+                        M.key.participant || M.key.remoteJid || '',
+                        decrypted,
+                      );
+                    } else if (hc) {
+                      decrypted = await decryptHcFromMessage(currentSock, M);
+                      logDecrypt(
+                        'decrypt-hc',
+                        M.key.remoteJid || '',
+                        M.key.participant || M.key.remoteJid || '',
+                        decrypted,
+                      );
+                    }
+      
+                    if (!decrypted) {
+                      await commandReply({
+                        text: error(
+                          '🔐 DECRYPT',
+                          [
+                            'No .hat or .hc document found.',
+                            `Reply to a .hat or .hc file with ${config.prefix}decrypt.`,
+                          ],
+                        ),
+                      });
+                    }
+      
+                    return;
+                  }
+      
+                  if (!text) {
+                    return;
+                  }
+      
+                  console.log(
+                    chalk.magenta(
+                      `[CMD] text=${JSON.stringify(text)} ` +
+                      `prefix=${JSON.stringify(config.prefix)}`
+                    )
                   );
-    
-                  return;
-                }
-    
-                /*
-                 * Development commands.
-                 *
-                 * Existing dev.ts owns its
-                 * command implementation.
-                 */
-                if (
-                  [
-                    'dev',
-                    'sh',
-                    'py',
-                    'status',
-                    'logs',
-                    'errors',
-                    'clearerrors',
-                    'restart',
-                    'repair',
-                  ].includes(command)
-                ) {
-                  if (
-                    !isCommandAuthorized(M)
-                  ) {
-                    await commandReply({
-                      
-                        text: error('⛔ ACCESS DENIED', ['Owner permission required.']),
-                      },
+      
+                  /*
+                   * Mute enforcement happens before
+                   * command processing.
+                   */
+                  const muted =
+                    await enforceMute(
+                      currentSock,
+                      M,
                     );
-    
+      
+                  if (muted) {
                     return;
                   }
-    
-                  const devArgs =
-                    command === 'dev'
-                      ? args
-                      : [
-                          command,
-                          ...args,
-                        ];
-    
+      
+                              /*
+               * Discord is a side effect, never part of the WhatsApp
+               * processing critical path. Never await network I/O here.
+               *
+               * Newsletters use a dedicated forwarding path.
+               */
+              const isNewsletter =
+                String(M.key.remoteJid || '').endsWith('@newsletter');
+
+              if (isNewsletter) {
+                void discord.fromNewsletter(
+                  M.key.participant ||
+                    M.key.remoteJid ||
+                    '',
+                  M.pushName ||
+                    M.key.remoteJid ||
+                    'Newsletter',
+                  text,
+                ).catch(error => {
+                  void reportError(
+                    'discord-newsletter',
+                    error,
+                  );
+                });
+
+                return;
+              }
+
+              if (
+                config.discordTarget &&
+                M.key.remoteJid === config.discordTarget
+              ) {
+                const quoted =
+                  message.extendedTextMessage?.contextInfo
+                    ?.quotedMessage;
+
+                const quotedText =
+                  quoted?.conversation ||
+                  quoted?.extendedTextMessage?.text ||
+                  quoted?.imageMessage?.caption ||
+                  quoted?.videoMessage?.caption ||
+                  '';
+
+                const discordText =
+                  quotedText.trim()
+                    ? `↩️ Reply to: ${quotedText.slice(0, 700)}\\n${text}`
+                    : text;
+
+                void discord.fromWA(
+                  M.key.participant ||
+                    M.key.remoteJid ||
+                    '',
+                  M.pushName || 'Unknown',
+                  discordText,
+                  M.key.id || undefined,
+                  M.key.fromMe === true,
+                ).catch(error => {
+                  void reportError(
+                    'discord-bridge',
+                    error,
+                  );
+                });
+              }
+
+  /*
+                   * Commands.
+                   */
                   if (
-                    command === 'status'
+                    !text.startsWith(
+                      config.prefix,
+                    )
                   ) {
-                    await commandReply({
-                      
-                        text: [
-                          'Bot status',
-                          `WhatsApp: ${waState}`,
-                          `Pairing: ${
-                            pairing
-                              ? 'active'
-                              : 'idle'
-                          }`,
-                          `Discord: ${
-                            discord.client?.isReady()
-                              ? 'connected'
-                              : 'disconnected'
-                          }`,
-                          `Discord target: ${
-                            config.discordTarget ||
-                            'not set'
-                          }`,
-                          `Reconnect attempt: ${
-                            reconnectAttempt
-                          }`,
-                          `Last code: ${
-                            lastDisconnectCode ??
-                            'none'
-                          }`,
-                          `Last reason: ${
-                            lastDisconnectReason ||
-                            'none'
-                          }`,
-                          `Uptime: ${uptime()}`,
-                        ].join('\n'),
-                      },
-                    );
-    
                     return;
                   }
-    
-                  if (
-                    command === 'logs'
-                  ) {
-                    const lines =
-                      readHistory(50);
-    
-                    await commandReply({
-                      
-                        text:
-                          lines.length
-                            ? lines
-                                .join('\n')
-                                .slice(-6000)
-                            : 'No Discord bridge history.',
-                      },
-                    );
-    
+      
+                  const body =
+                    text.slice(
+                      config.prefix.length,
+                    ).trim();
+      
+                  if (!body) {
                     return;
                   }
-    
+      
+                  const parts =
+                    body.split(/\s+/);
+      
+                  const command =
+                    (
+                      parts.shift() ||
+                      ''
+                    ).toLowerCase();
+      
+                  const args = parts;
+      
+                  /*
+                   * Every command is owner-only.
+                   * Non-owners are ignored silently, so the
+                   * bot does not reveal that it exists to
+                   * people who type !commands.
+                   */
                   if (
-                    command === 'errors'
-                  ) {
-                    const lines =
-                      readErrors(50);
-    
-                    await commandReply({
-                      
-                        text:
-                          lines.length
-                            ? lines
-                                .join('\n')
-                                .slice(-6000)
-                            : 'No recorded errors.',
-                      },
-                    );
-    
+                      !isCommandAuthorized(M)
+                    ) {
                     return;
                   }
-    
+      
+                  /*
+                   * !hi
+                   */
                   if (
-                    command ===
-                    'clearerrors'
+                    command === 'hi'
                   ) {
-                    clearErrors();
-    
-                    await commandReply({
-                      
-                        text:
-                          'Error log cleared.',
-                      },
+                    await commandReply(
+                      success(
+                        '🟢 M_D TOOL ONLINE',
+                        [
+                          'Status : Connected',
+                          'WhatsApp : Ready',
+                        ],
+                      ),
                     );
-    
+      
                     return;
                   }
-    
-                  if (
-                    command === 'repair'
-                  ) {
+      
+                  /*
+                   * !help
+                   */
+                  if (command === 'help') {
+                    await commandReply({
+                      
+                        text: box(
+                          '📖 M_D TOOL HELP',
+                          [
+                            'GENERAL',
+                            `${config.prefix}help  — show commands`,
+                            `${config.prefix}hi    — bot online check`,
+                            '',
+                            '📡 SCANNER',
+                            `${config.prefix}scan`,
+                            `${config.prefix}scan on`,
+                            `${config.prefix}scan off`,
+                            `${config.prefix}scan status`,
+                            `${config.prefix}scan logs`,
+                            `${config.prefix}scan file`,
+                            `${config.prefix}scan clear`,
+                            '',
+                            '🔓 CONFIG DECRYPT',
+                            `${config.prefix}decrypt`,
+                            `${config.prefix}decrypt on`,
+                            `${config.prefix}decrypt off`,
+                            `${config.prefix}decrypt status`,
+                            `${config.prefix}decrypt logs`,
+                            `${config.prefix}decrypt file`,
+                            `${config.prefix}decrypt clear`,
+                            '',
+                            '🛡 GROUP MODERATION',
+                            `${config.prefix}warn`,
+                            `${config.prefix}kick`,
+                            `${config.prefix}mute`,
+                            `${config.prefix}unmute`,
+                            `${config.prefix}warnings`,
+                            `${config.prefix}clearwarn`,
+                            `${config.prefix}add`,
+                            `${config.prefix}promote`,
+                            `${config.prefix}demote`,
+                            '',
+                            '⚙️ ADMIN / DEV',
+                            `${config.prefix}config`,
+                            `${config.prefix}dev status`,
+                            `${config.prefix}dev logs`,
+                            `${config.prefix}dev errors`,
+                            `${config.prefix}dev clearerrors`,
+                            `${config.prefix}dev sh`,
+                            `${config.prefix}dev py`,
+                            `${config.prefix}dev restart`,
+                          ],
+                        ),
+                      },
+                    );
+      
+                    return;
+                  }
+      
+                  /*
+                   * !decrypt
+                   */
+                  if (command === 'decrypt') {
                     if (
-                      waState ===
-                      'connected'
+                      !isCommandAuthorized(M)
                     ) {
                       await commandReply({
                         
-                          text:
-                            'Repair refused while WhatsApp is connected.',
+                          text: error(
+                            '⛔ ACCESS DENIED',
+                            [
+                              'Owner permission required.',
+                            ],
+                          ),
                         },
                       );
-    
                       return;
                     }
-    
-                    if (reconnectTimer) {
-                      clearTimeout(
-                        reconnectTimer,
+      
+                    const action =
+                      (args[0] || 'decrypt').toLowerCase();
+      
+                    /*
+                     * !decrypt on
+                     */
+                    if (action === 'on') {
+                      setDecryptEnabled(true);
+      
+                      await commandReply({
+                        
+                          text: success(
+                            '🔓 CONFIG DECRYPT',
+                            [
+                              'Status : ON',
+                              'Automatic decryption enabled.',
+                            ],
+                          ),
+                        },
                       );
-    
-                      reconnectTimer = null;
+      
+                      return;
                     }
-    
-                    const backup =
-                      archiveAuth();
-    
-                    pairing = false;
-                    reconnectAttempt = 0;
-    
-                    await commandReply({
-                      
-                        text: backup
-                          ? [
-                              'Auth archived.',
-                              `Backup: ${backup}`,
-                              'Starting fresh pairing...',
-                            ].join('\n')
-                          : [
-                              'No existing auth found.',
-                              'Starting fresh pairing...',
-                            ].join('\n'),
-                      },
-                    );
-    
-                    sock = null;
-    
-                    await sleep(1000);
-    
-                    void connect();
-    
+      
+                    /*
+                     * !decrypt off
+                     */
+                    if (action === 'off') {
+                      setDecryptEnabled(false);
+      
+                      await commandReply({
+                        
+                          text: warning(
+                            '🔓 CONFIG DECRYPT',
+                            [
+                              'Status : OFF',
+                              'Automatic decryption disabled.',
+                            ],
+                          ),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    /*
+                     * !decrypt status
+                     */
+                    if (action === 'status') {
+                      await commandReply({
+                        
+                          text: info(
+                            '🔓 CONFIG DECRYPT',
+                            [
+                              `Status : ${decryptEnabled() ? 'ON' : 'OFF'}`,
+                              `Log file : ${decryptLogFile()}`,
+                            ],
+                          ),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    /*
+                     * !decrypt logs
+                     */
+                    if (action === 'logs') {
+                      const logs = recentDecryptLogs(10);
+      
+                      await commandReply({
+                        
+                          text: info(
+                            '📜 DECRYPT LOGS',
+                            logs.length ? logs : ['No decrypt logs.'],
+                          ),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    /*
+                     * !decrypt file
+                     */
+                    if (action === 'file') {
+                      await commandReply({
+                        
+                          text: info(
+                            '📜 DECRYPT LOG FILE',
+                            [decryptLogFile()],
+                          ),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    /*
+                     * !decrypt clear
+                     */
+                    if (action === 'clear') {
+                      clearDecryptLogs();
+      
+                      await commandReply({
+                        
+                          text: success('📜 DECRYPT LOGS', ['Log cleared.']),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    /*
+                     * !decrypt
+                     *
+                     * Only decrypt when explicitly enabled.
+                     */
+                    if (!decryptEnabled()) {
+                      await commandReply({
+                        
+                          text: warning(
+                            '🔓 CONFIG DECRYPT',
+                            [
+                              'Status : OFF',
+                              `Use ${config.prefix}decrypt on first.`,
+                            ],
+                          ),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    const hat =
+                      findHatDocument(M.message) ||
+                      findQuotedHatDocument(M.message);
+      
+                    const hc =
+                      findHcDocument(M.message) ||
+                      findQuotedHcDocument(M.message);
+      
+                    let decrypted = false;
+      
+                    if (hat) {
+                      decrypted = await decryptHatFromMessage(currentSock, M);
+                      logDecrypt(
+                        'decrypt-hat',
+                        M.key.remoteJid || '',
+                        M.key.participant || M.key.remoteJid || '',
+                        decrypted,
+                      );
+                    } else if (hc) {
+                      decrypted = await decryptHcFromMessage(currentSock, M);
+                      logDecrypt(
+                        'decrypt-hc',
+                        M.key.remoteJid || '',
+                        M.key.participant || M.key.remoteJid || '',
+                        decrypted,
+                      );
+                    }
+      
+                    if (!decrypted) {
+                      await commandReply({
+                        text: error(
+                          '🔐 DECRYPT',
+                          [
+                            'No .hat or .hc document found.',
+                            `Reply to a .hat or .hc file with ${config.prefix}decrypt.`,
+                          ],
+                        ),
+                      });
+                    }
+      
                     return;
                   }
-    
-                  try {
-                    await dev(
+      
+                  /*
+                   * !scan
+                   */
+                  if (command === 'scan') {
+                    if (
+                      !isCommandAuthorized(M)
+                    ) {
+                      await commandReply({
+                         text: error('⛔ ACCESS DENIED', ['Owner permission required.']) },
+                      );
+                      return;
+                    }
+      
+                    const action =
+                      (args[0] || 'status').toLowerCase();
+      
+                    if (action === 'on') {
+                      scannerEnabled = true;
+      
+                      await commandReply({
+                        
+                          text: success('📡 SCANNER', ['Status : ON', 'Passive IP/URL scanning enabled.']),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    if (action === 'off') {
+                      scannerEnabled = false;
+      
+                      await commandReply({
+                        
+                          text: warning('📡 SCANNER', ['Status : OFF', 'Passive IP/URL scanning disabled.']),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    if (action === 'clear') {
+                      clearMatches();
+      
+                      await commandReply({
+                        
+                          text: success('📡 SCANNER', ['Saved matches cleared.']),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    if (action === 'file') {
+                      await commandReply({
+                        
+                          text: info(
+                            '📡 SCANNER FILE',
+                            [scannerFile()],
+                          ),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    if (action === 'logs') {
+                      const lines =
+                        readMatches(
+                          Number(args[1]) || 50,
+                        );
+      
+                      await commandReply({
+                        
+                          text: info(
+                            '📡 SCANNER LOGS',
+                            lines.length
+                              ? lines
+                              : ['No scanner matches.'],
+                          ),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    await commandReply({
+                      
+                        text: info(
+                        '📡 SCANNER STATUS',
+                        [
+                          `Enabled : ${scannerEnabled ? 'YES' : 'NO'}`,
+                          '',
+                          `${config.prefix}scan on`,
+                          `${config.prefix}scan off`,
+                          `${config.prefix}scan logs`,
+                          `${config.prefix}scan clear`,
+                          `${config.prefix}scan file`,
+                        ],
+                      ),
+                      },
+                    );
+      
+                    return;
+                  }
+      
+                  /*
+                   * !config
+                   */
+                  if (
+                    command === 'config'
+                  ) {
+                    if (
+                      !isCommandAuthorized(M)
+                    ) {
+                      await commandReply({
+                        
+                          text: error('⛔ ACCESS DENIED', ['Owner permission required.']),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    await configCommand(
                       {
                         ...M,
                         reply: async (
                           replyText: string,
                         ) => {
                           await commandReply({
-                            
-                              text: replyText,
-                            },
+                             text: replyText },
                           );
                         },
                         sender:
@@ -2325,79 +2109,289 @@ async function handleWhatsAppMessage(
                           M.key.remoteJid ||
                           '',
                       },
-                      devArgs,
+                      args,
                     );
-                  } catch (error) {
-                    await reportError(
-                      'dev-command',
-                      error,
-                    );
+      
+                    return;
                   }
-    
-                  return;
-                }
-    
-                /*
-                 * Moderation commands.
-                 */
-                if (
-                  [
-                    'warn',
-                    'warnings',
-                    'clearwarn',
-                    'kick',
-                    'mute',
-                    'unmute',
-                    'add',
-                    'promote',
-                    'demote',
-                  ].includes(command)
-                ) {
-                  try {
-                    await moderate(
-                      currentSock,
-                      {
-                        ...M,
-                        reply: async (
-                          replyText: string,
-                        ) => {
-                          await commandReply({
-                            
-                              text: replyText,
-                            },
-                          );
+      
+                  /*
+                   * Development commands.
+                   *
+                   * Existing dev.ts owns its
+                   * command implementation.
+                   */
+                  if (
+                    [
+                      'dev',
+                      'sh',
+                      'py',
+                      'status',
+                      'logs',
+                      'errors',
+                      'clearerrors',
+                      'restart',
+                      'repair',
+                    ].includes(command)
+                  ) {
+                    if (
+                      !isCommandAuthorized(M)
+                    ) {
+                      await commandReply({
+                        
+                          text: error('⛔ ACCESS DENIED', ['Owner permission required.']),
                         },
-                        sender:
-                          M.key.participant ||
-                          M.key.remoteJid ||
-                          '',
-                      },
-                      command,
-                      args.join(' '),
-                    );
-                  } catch (error) {
-                    await reportError(
-                      'moderation',
-                      error,
-                    );
+                      );
+      
+                      return;
+                    }
+      
+                    const devArgs =
+                      command === 'dev'
+                        ? args
+                        : [
+                            command,
+                            ...args,
+                          ];
+      
+                    if (
+                      command === 'status'
+                    ) {
+                      await commandReply({
+                        
+                          text: [
+                            'Bot status',
+                            `WhatsApp: ${waState}`,
+                            `Pairing: ${
+                              pairing
+                                ? 'active'
+                                : 'idle'
+                            }`,
+                            `Discord: ${
+                              discord.client?.isReady()
+                                ? 'connected'
+                                : 'disconnected'
+                            }`,
+                            `Discord target: ${
+                              config.discordTarget ||
+                              'not set'
+                            }`,
+                            `Reconnect attempt: ${
+                              reconnectAttempt
+                            }`,
+                            `Last code: ${
+                              lastDisconnectCode ??
+                              'none'
+                            }`,
+                            `Last reason: ${
+                              lastDisconnectReason ||
+                              'none'
+                            }`,
+                            `Uptime: ${uptime()}`,
+                          ].join('\n'),
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    if (
+                      command === 'logs'
+                    ) {
+                      const lines =
+                        readHistory(50);
+      
+                      await commandReply({
+                        
+                          text:
+                            lines.length
+                              ? lines
+                                  .join('\n')
+                                  .slice(-6000)
+                              : 'No Discord bridge history.',
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    if (
+                      command === 'errors'
+                    ) {
+                      const lines =
+                        readErrors(50);
+      
+                      await commandReply({
+                        
+                          text:
+                            lines.length
+                              ? lines
+                                  .join('\n')
+                                  .slice(-6000)
+                              : 'No recorded errors.',
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    if (
+                      command ===
+                      'clearerrors'
+                    ) {
+                      clearErrors();
+      
+                      await commandReply({
+                        
+                          text:
+                            'Error log cleared.',
+                        },
+                      );
+      
+                      return;
+                    }
+      
+                    if (
+                      command === 'repair'
+                    ) {
+                      if (
+                        waState ===
+                        'connected'
+                      ) {
+                        await commandReply({
+                          
+                            text:
+                              'Repair refused while WhatsApp is connected.',
+                          },
+                        );
+      
+                        return;
+                      }
+      
+                      if (reconnectTimer) {
+                        clearTimeout(
+                          reconnectTimer,
+                        );
+      
+                        reconnectTimer = null;
+                      }
+      
+                      const backup =
+                        archiveAuth();
+      
+                      pairing = false;
+                      reconnectAttempt = 0;
+      
+                      await commandReply({
+                        
+                          text: backup
+                            ? [
+                                'Auth archived.',
+                                `Backup: ${backup}`,
+                                'Starting fresh pairing...',
+                              ].join('\n')
+                            : [
+                                'No existing auth found.',
+                                'Starting fresh pairing...',
+                              ].join('\n'),
+                        },
+                      );
+      
+                      sock = null;
+      
+                      await sleep(1000);
+      
+                      void connect();
+      
+                      return;
+                    }
+      
+                    try {
+                      await dev(
+                        {
+                          ...M,
+                          reply: async (
+                            replyText: string,
+                          ) => {
+                            await commandReply({
+                              
+                                text: replyText,
+                              },
+                            );
+                          },
+                          sender:
+                            M.key.participant ||
+                            M.key.remoteJid ||
+                            '',
+                        },
+                        devArgs,
+                      );
+                    } catch (error) {
+                      await reportError(
+                        'dev-command',
+                        error,
+                      );
+                    }
+      
+                    return;
                   }
-    
-                  return;
+      
+                  /*
+                   * Moderation commands.
+                   */
+                  if (
+                    [
+                      'warn',
+                      'warnings',
+                      'clearwarn',
+                      'kick',
+                      'mute',
+                      'unmute',
+                      'add',
+                      'promote',
+                      'demote',
+                    ].includes(command)
+                  ) {
+                    try {
+                      await moderate(
+                        currentSock,
+                        {
+                          ...M,
+                          reply: async (
+                            replyText: string,
+                          ) => {
+                            await commandReply({
+                              
+                                text: replyText,
+                              },
+                            );
+                          },
+                          sender:
+                            M.key.participant ||
+                            M.key.remoteJid ||
+                            '',
+                        },
+                        command,
+                        args.join(' '),
+                      );
+                    } catch (error) {
+                      await reportError(
+                        'moderation',
+                        error,
+                      );
+                    }
+      
+                    return;
+                  }
+      
+                } catch (error) {
+                  await reportError(
+                    'message-handler',
+                    error,
+                  );
                 }
-    
-              } catch (error) {
-                await reportError(
-                  'message-handler',
-                  error,
-                );
-              }
-  } catch (error) {
-    await reportError(
-      'message-handler',
-      error,
-    );
+
   }
-}
 
     currentSock.ev.on(
       'messages.upsert',
