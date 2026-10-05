@@ -10,11 +10,6 @@ import makeWASocket, {
 import chalk from 'chalk';
 
 import { config } from './config.js';
-import {
-  extractMessageText,
-  unwrapMessageContent,
-} from './message-utils.js';
-
 import { DiscordBridge } from './discord.js';
 import { appendError, clearErrors, readErrors, readHistory } from './state.js';
 import { configCommand } from './config-command.js';
@@ -46,6 +41,7 @@ import { createMessageSideEffects } from './message-side-effects.js';
 import { createScannerService } from './scanner-service.js';
 import { createDecryptService } from './decrypt.js';
 import { createCommandRouter } from './command-router.js';
+import { createWhatsAppMessageHandler } from './message-handler.js';
 
 const sleep = (ms: number) =>
   new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -758,203 +754,6 @@ async function connect() {
       },
     );
 
-async function handleWhatsAppMessage(
-  currentSock: ReturnType<typeof makeWASocket>,
-  M: any,
-) {
-      try {
-                  if (config.ignoreOfflineMessages) {
-                    /*
-                     * With backlog filtering enabled, anything delivered
-                     * before the socket is OPEN is not admitted to the
-                     * expensive message pipeline.
-                     */
-                    if (!messageCutoffReady) {
-                      return;
-                    }
-
-                    const rawTimestamp = M.messageTimestamp;
-                    const messageTimestamp =
-                      typeof rawTimestamp === 'number'
-                        ? rawTimestamp
-                        : Number(rawTimestamp?.low ?? rawTimestamp ?? 0);
-
-                    /*
-                     * Backlog messages are discarded before message type
-                     * inspection, text extraction, scanner dispatch, logging,
-                     * command work, or Discord forwarding.
-                     */
-                    if (
-                      messageTimestamp > 0 &&
-                      messageTimestamp < messageCutoffUnix
-                    ) {
-                      return;
-                    }
-                  }
-
-                  if (!M.message) {
-                    return;
-                  }
-
-                  console.log(
-                    chalk.magenta(
-                      `[MSG] received jid=${M.key.remoteJid || 'unknown'} ` +
-                      `fromMe=${M.key.fromMe ? 'yes' : 'no'} ` +
-                      `type=${Object.keys(M.message || {}).join(',') || 'none'}`
-                    )
-                  );
-      
-                  const message = M.message;
-                  const scanMessage = unwrapMessageContent(message);
-                  const text = extractMessageText(scanMessage);
-
-                  /*
-                   * Discord forwarding is a detached side effect and is started
-                   * immediately after reception/text extraction. This keeps
-                   * newsletters independent of command processing and allows
-                   * non-text newsletter updates to be forwarded too.
-                   */
-                  sideEffects.dispatchDiscordForMessage(
-                    M,
-                    message,
-                    text,
-                  );
-      
-                  /*
-                   * Command replies always return to the originating WhatsApp chat.
-                   * The original command is quoted so WhatsApp renders it as a reply,
-                   * including when the command was issued inside a group.
-                   */
-                  const commandReply = async (content: any) => {
-                    let payload =
-                      typeof content === 'string'
-                        ? { text: content }
-                        : { ...content };
-      
-                    if (
-                      typeof payload.text === 'string' &&
-                      !payload.text.includes('╭━━━')
-                    ) {
-                      payload.text = info(
-                        'M_D TOOL',
-                        payload.text.split('\n'),
-                      );
-                    }
-      
-                    await currentSock.sendMessage(
-                      M.key.remoteJid!,
-                      payload,
-                      { quoted: M },
-                    );
-                  };
-      
-      
-                  /*
-                   * Scanner is a separate fire-and-forget subsystem.
-                   */
-                  sideEffects.dispatchScannerForMessage(
-                    M,
-                    scanMessage,
-                    text,
-                  );
-
-                  /*
-                   * !decrypt can operate on a directly
-                   * received .hat document or a reply
-                   * to a .hat document.
-                   *
-                   * We process this before the normal
-                   * text check because documents do not
-                   * necessarily contain conversation text.
-                   */
-                  if (
-                    text.trim().toLowerCase() ===
-                    `${config.prefix}decrypt`
-                  ) {
-                    const hat =
-                      decrypt.findHatDocument(M.message) ||
-                      decrypt.findQuotedHatDocument(M.message);
-      
-                    const hc =
-                      decrypt.findHcDocument(M.message) ||
-                      decrypt.findQuotedHcDocument(M.message);
-      
-                    let decrypted = false;
-      
-                    if (hat) {
-                      decrypted = await decrypt.decryptHatFromMessage(currentSock, M);
-                      decrypt.logDecrypt(
-                        'decrypt-hat',
-                        M.key.remoteJid || '',
-                        M.key.participant || M.key.remoteJid || '',
-                        decrypted,
-                      );
-                    } else if (hc) {
-                      decrypted = await decrypt.decryptHcFromMessage(currentSock, M);
-                      decrypt.logDecrypt(
-                        'decrypt-hc',
-                        M.key.remoteJid || '',
-                        M.key.participant || M.key.remoteJid || '',
-                        decrypted,
-                      );
-                    }
-      
-                    if (!decrypted) {
-                      await commandReply({
-                        text: error(
-                          '🔐 DECRYPT',
-                          [
-                            'No .hat or .hc document found.',
-                            `Reply to a .hat or .hc file with ${config.prefix}decrypt.`,
-                          ],
-                        ),
-                      });
-                    }
-      
-                    return;
-                  }
-      
-                  if (!text) {
-                    return;
-                  }
-
-                  /*
-                   * Self-generated non-command messages do not need to enter
-                   * command routing. Self-issued prefixed commands remain
-                   * supported by isCommandAuthorized().
-                   */
-                  if (
-                    M.key.fromMe === true &&
-                    !text.trim().startsWith(config.prefix)
-                  ) {
-                    return;
-                  }
-      
-                  console.log(
-                    chalk.magenta(
-                      `[CMD] text=${JSON.stringify(text)} ` +
-                      `prefix=${JSON.stringify(config.prefix)}`,
-                    ),
-                  );
-
-                  await commandRouter(
-                    currentSock,
-                    M,
-                    message,
-                    text,
-                    commandReply,
-                  );
-
-                  return;
-                } catch (error) {
-                  await reportError(
-                    'message-handler',
-                    error,
-                  );
-                }
-
-  }
-
     currentSock.ev.on(
       'messages.upsert',
       ({ messages }) => {
@@ -968,7 +767,7 @@ async function handleWhatsAppMessage(
           );
         }
       },
-    );;
+    );
 
     /*
      * New account: request phone
@@ -1122,7 +921,20 @@ const commandRouter = createCommandRouter({
   dispatchDiscordForMessage: sideEffects.dispatchDiscordForMessage,
 });
 
-
+const handleWhatsAppMessage =
+  createWhatsAppMessageHandler({
+    config,
+    sideEffects,
+    decrypt,
+    commandRouter,
+    info,
+    error,
+    reportError,
+    getMessageCutoff: () => ({
+      ready: messageCutoffReady,
+      unix: messageCutoffUnix,
+    }),
+  });
 
 async function startup() {
   ensureDirs();
