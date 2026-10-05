@@ -42,6 +42,7 @@ export type CommandRouterDeps = {
   dispatchDiscordForMessage: (M: any, message: any, text: string) => boolean;
   clearMatches: () => void;
   readMatches: (limit?: number) => string[];
+  scannerFile: () => string;
   uptime: () => string;
   reportError: (category: string, error: unknown) => Promise<void>;
 };
