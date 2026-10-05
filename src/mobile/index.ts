@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 
 import makeWASocket, {
   DisconnectReason,
@@ -317,47 +318,38 @@ async function chatDisplayName(
   return jid;
 }
 
-async function scanAndNotify(
-  text: string,
-  source: string,
-  chat: string,
-  sender: string,
+type ScannerResult = {
+  id: number;
+  ok: boolean;
+  fresh?: Array<{
+    type: string;
+    value: string;
+    source: string;
+    chat: string;
+    sender: string;
+    path: string;
+  }>;
+  error?: string;
+};
+
+let scannerJobId = 0;
+
+const scannerWorker = new Worker(
+  new URL('./scanner-worker.js', import.meta.url),
+  { type: 'module' },
+);
+
+async function notifyScannerResult(
+  result: ScannerResult,
 ) {
-  if (!scannerEnabled || !text.trim()) {
+  const fresh = result.fresh || [];
+
+  if (!result.ok) {
+    console.error(
+      chalk.gray('[SCANNER] worker failed:'),
+      result.error || 'unknown error',
+    );
     return;
-  }
-
-  const matches = scanText(
-    text,
-    source,
-    chat,
-    sender,
-  );
-
-  const fresh = saveMatches(matches);
-
-  /*
-   * Permanent, sanitized record of decrypted
-   * payloads. Secrets are redacted in place; the
-   * file is never pruned, so history survives
-   * past the 48-hour scanner-match retention.
-   */
-  if (source.toLowerCase().includes('decrypted')) {
-    try {
-      savePayloadRecord(
-        text,
-        source,
-        chat,
-        sender,
-      );
-    } catch (error) {
-      console.error(
-        chalk.gray(
-          '[SCANNER] payload record failed:',
-        ),
-        errorText(error),
-      );
-    }
   }
 
   if (!fresh.length || !sock) {
@@ -365,15 +357,16 @@ async function scanAndNotify(
   }
 
   /*
-   * One batched summary per scanned text instead
-   * of a message per match.
+   * Notification is deliberately outside the WhatsApp
+   * message event handler. Group metadata, owner sends,
+   * and Discord API waits cannot delay command handling.
    */
   const chatName =
-    await chatDisplayName(sock, chat);
+    await chatDisplayName(sock, fresh[0]?.chat || '');
 
   const lines = [
     `[SCANNER] ${fresh.length} new match` +
-      `${fresh.length === 1 ? '' : 'es'} (${source})`,
+      `${fresh.length === 1 ? '' : 'es'} (${fresh[0]?.source || 'scan'})`,
   ];
 
   for (const match of fresh.slice(0, 25)) {
@@ -393,10 +386,13 @@ async function scanAndNotify(
     );
   }
 
+  const notificationText =
+    lines.join('\n').slice(0, 6000);
+
   for (const owner of config.owners) {
     try {
       await sock.sendMessage(owner, {
-        text: lines.join('\n').slice(0, 6000),
+        text: notificationText,
       });
     } catch (error) {
       console.error(
@@ -421,12 +417,70 @@ async function scanAndNotify(
     );
   } catch (error) {
     console.error(
-      chalk.gray('[SCANNER] Discord notification failed:'),
+      chalk.gray(
+        '[SCANNER] Discord notification failed:',
+      ),
       errorText(error),
     );
   }
 }
 
+scannerWorker.on(
+  'message',
+  (result: ScannerResult) => {
+    void notifyScannerResult(result).catch(
+      error => {
+        console.error(
+          chalk.gray(
+            '[SCANNER] notification handler failed:',
+          ),
+          errorText(error),
+        );
+      },
+    );
+  },
+);
+
+scannerWorker.on('error', error => {
+  console.error(
+    chalk.gray('[SCANNER] worker error:'),
+    errorText(error),
+  );
+});
+
+scannerWorker.on('exit', code => {
+  if (code !== 0) {
+    console.error(
+      chalk.gray(
+        `[SCANNER] worker exited with code ${code}`,
+      ),
+    );
+  }
+});
+
+function scanAndNotify(
+  text: string,
+  source: string,
+  chat: string,
+  sender: string,
+) {
+  if (!scannerEnabled || !text.trim()) {
+    return;
+  }
+
+  /*
+   * Fire-and-forget. The WhatsApp message handler
+   * never waits for scanning, filesystem I/O, group
+   * metadata, owner notifications, or Discord.
+   */
+  scannerWorker.postMessage({
+    id: ++scannerJobId,
+    text,
+    source,
+    chat,
+    sender,
+  });
+}
 async function requestPairingCode(
   state: Awaited<
     ReturnType<typeof useMultiFileAuthState>
