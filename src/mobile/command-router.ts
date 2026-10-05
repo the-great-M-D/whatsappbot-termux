@@ -10,6 +10,8 @@ export type CommandRouterDeps = {
   box: (...args: any[]) => string;
   isCommandAuthorized: (M: any) => boolean;
   decrypt: any;
+  decryptEnabled: () => boolean;
+  decryptLogFile: () => string;
   scanner: any;
   discord: DiscordBridge;
   configCommand: (M: any, args: string[]) => Promise<any> | any;
@@ -40,7 +42,6 @@ export type CommandRouterDeps = {
   dispatchDiscordForMessage: (M: any, message: any, text: string) => boolean;
   clearMatches: () => void;
   readMatches: (limit?: number) => string[];
-  scannerFile: () => string;
   uptime: () => string;
   reportError: (category: string, error: unknown) => Promise<void>;
 };
@@ -464,7 +465,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                         
                           text: info(
                             '📡 SCANNER FILE',
-                            [scannerFile()],
+                            [deps.scannerFile()],
                           ),
                         },
                       );
