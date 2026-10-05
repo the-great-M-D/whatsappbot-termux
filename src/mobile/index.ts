@@ -556,14 +556,17 @@ async function connect() {
             ),
           );
 
-          try {
-            await discord.start();
-          } catch (error) {
-            await reportError(
+          /*
+           * Discord is a side-effect subsystem. Never make WhatsApp's
+           * connection/open path wait on Discord startup or its network
+           * latency. A Discord failure must remain isolated from WA.
+           */
+          void discord.start().catch(error => {
+            void reportError(
               'discord-start',
               error,
             );
-          }
+          });
 
           return;
         }
