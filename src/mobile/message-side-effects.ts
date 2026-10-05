@@ -92,6 +92,15 @@ export function createMessageSideEffects(
       String(M.key.remoteJid || '').endsWith('@newsletter');
 
     if (isNewsletter) {
+      /*
+       * Forward newsletter updates regardless of whether they contain
+       * conversation text. The forwarding call is detached, so Discord
+       * network latency can never hold up WhatsApp reception.
+       */
+      const newsletterText =
+        text.trim() ||
+        `[Newsletter update] messageType=${Object.keys(message || {}).join(',') || 'unknown'}`;
+
       void deps.discord.fromNewsletter(
         M.key.participant ||
           M.key.remoteJid ||
@@ -99,7 +108,7 @@ export function createMessageSideEffects(
         M.pushName ||
           M.key.remoteJid ||
           'Newsletter',
-        text,
+        newsletterText,
       ).catch(error => {
         void deps.reportError(
           'discord-newsletter',
@@ -127,7 +136,7 @@ export function createMessageSideEffects(
 
       const discordText =
         quotedText.trim()
-          ? `↩️ Reply to: ${quotedText.slice(0, 700)}\\n${text}`
+          ? `↩️ Reply to: ${quotedText.slice(0, 700)}\n${text}`
           : text;
 
       void deps.discord.fromWA(
