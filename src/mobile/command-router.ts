@@ -78,7 +78,6 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                    * function prevents command execution from becoming a
                    * dependency of Discord/newsletter delivery.
                    */
-                   */
                   if (
                     !text.startsWith(
                       config.prefix,
