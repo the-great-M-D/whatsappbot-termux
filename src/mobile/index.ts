@@ -954,6 +954,7 @@ const commandRouter = createCommandRouter({
   clearMatches,
   readMatches,
   scannerFile,
+  dispatchDiscordForMessage: sideEffects.dispatchDiscordForMessage,
 });
 
 
