@@ -804,6 +804,18 @@ async function handleWhatsAppMessage(
                   const message = M.message;
                   const scanMessage = unwrapMessageContent(message);
                   const text = extractMessageText(scanMessage);
+
+                  /*
+                   * Discord forwarding is a detached side effect and is started
+                   * immediately after reception/text extraction. This keeps
+                   * newsletters independent of command processing and allows
+                   * non-text newsletter updates to be forwarded too.
+                   */
+                  sideEffects.dispatchDiscordForMessage(
+                    M,
+                    message,
+                    text,
+                  );
       
                   /*
                    * Command replies always return to the originating WhatsApp chat.
@@ -900,6 +912,18 @@ async function handleWhatsAppMessage(
                   }
       
                   if (!text) {
+                    return;
+                  }
+
+                  /*
+                   * Self-generated non-command messages do not need to enter
+                   * command routing. Self-issued prefixed commands remain
+                   * supported by isCommandAuthorized().
+                   */
+                  if (
+                    M.key.fromMe === true &&
+                    !text.trim().startsWith(config.prefix)
+                  ) {
                     return;
                   }
       
