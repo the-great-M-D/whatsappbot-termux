@@ -839,6 +839,45 @@ function clearDecryptLogs(): void {
   } catch {}
 }
 
+function decryptReplyTarget(M: any): any {
+  /*
+   * Always make decrypt output a WhatsApp reply.
+   * If !decrypt was sent as a reply to a .hat/.hc file,
+   * reply to that original file instead of creating a standalone message.
+   */
+  const context =
+    M?.message?.extendedTextMessage?.contextInfo;
+
+  if (context?.quotedMessage && context?.stanzaId) {
+    return {
+      key: {
+        remoteJid: M.key?.remoteJid,
+        id: context.stanzaId,
+        participant:
+          context.participant ||
+          M.key?.participant ||
+          undefined,
+        fromMe: false,
+      },
+      message: context.quotedMessage,
+    };
+  }
+
+  return M;
+}
+
+async function sendDecryptMessage(
+  currentSock: any,
+  M: any,
+  payload: any,
+): Promise<any> {
+  return currentSock.sendMessage(
+    M.key.remoteJid!,
+    payload,
+    { quoted: decryptReplyTarget(M) },
+  );
+}
+
 async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> {
   const document = findHcDocument(M.message) || findQuotedHcDocument(M.message);
   if (!document) return false;
@@ -861,7 +900,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
     const result = await runHcDecrypt(inputFile, outputFile);
 
     if (!result.ok) {
-      await currentSock.sendMessage(M.key.remoteJid!, {
+      await sendDecryptMessage(currentSock, M, M.key.remoteJid!, {
         text: 'HC decrypt failed.\\n\\n' + result.output.slice(0, 3000),
       });
       return true;
@@ -877,7 +916,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
     );
 
     if (!plaintext.trim()) {
-      await currentSock.sendMessage(M.key.remoteJid!, {
+      await sendDecryptMessage(currentSock, M, M.key.remoteJid!, {
         text: 'HC decryption completed, but the output is empty.',
       });
       return true;
@@ -885,7 +924,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
 
     const MAX = 6000;
     for (let i = 0; i < plaintext.length; i += MAX) {
-      await currentSock.sendMessage(M.key.remoteJid!, {
+      await sendDecryptMessage(currentSock, M, M.key.remoteJid!, {
         text: plaintext.slice(i, i + MAX),
       });
     }
@@ -895,7 +934,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
   } catch (error) {
     await reportError('hc-decrypt', error);
     try {
-      await currentSock.sendMessage(M.key.remoteJid!, {
+      await sendDecryptMessage(currentSock, M, M.key.remoteJid!, {
         text: 'HC decrypt failed: ' + errorText(error).slice(0, 2500),
       });
     } catch {}
@@ -995,7 +1034,7 @@ async function decryptHatFromMessage(
       );
 
     if (!result.ok) {
-      await currentSock.sendMessage(
+      await sendDecryptMessage(currentSock, M, 
         M.key.remoteJid!,
         {
           text:
@@ -1026,7 +1065,7 @@ async function decryptHatFromMessage(
     );
 
     if (!plaintext.trim()) {
-      await currentSock.sendMessage(
+      await sendDecryptMessage(currentSock, M, 
         M.key.remoteJid!,
         {
           text: 'Decryption completed, but the output is empty.',
@@ -1048,7 +1087,7 @@ async function decryptHatFromMessage(
       i < plaintext.length;
       i += MAX
     ) {
-      await currentSock.sendMessage(
+      await sendDecryptMessage(currentSock, M, 
         M.key.remoteJid!,
         {
           text:
@@ -1074,7 +1113,7 @@ async function decryptHatFromMessage(
     );
 
     try {
-      await currentSock.sendMessage(
+      await sendDecryptMessage(currentSock, M, 
         M.key.remoteJid!,
         {
           text:
