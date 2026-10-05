@@ -899,6 +899,13 @@ const decrypt = createDecryptService({
   reportError,
 });
 
+const sideEffects = createMessageSideEffects({
+  scanAndNotify: scanner.scanAndNotify,
+  discord,
+  discordTarget: config.discordTarget,
+  reportError,
+});
+
 const commandRouter = createCommandRouter({
   config,
   info,
@@ -942,19 +949,12 @@ const commandRouter = createCommandRouter({
   uptime,
   reportError,
   enforceMute,
-  dispatchDiscordForMessage: (M, message, text) =>
-    sideEffects.dispatchDiscordForMessage(M, message, text),
   clearMatches,
   readMatches,
   scannerFile,
 });
 
-const sideEffects = createMessageSideEffects({
-  scanAndNotify: scanner.scanAndNotify,
-  discord,
-  discordTarget: config.discordTarget,
-  reportError,
-});
+
 
 async function startup() {
   ensureDirs();
