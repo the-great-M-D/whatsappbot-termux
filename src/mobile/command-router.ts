@@ -1,4 +1,5 @@
-import type { DiscordBridge } from './deps.discord.js';
+import chalk from 'chalk';
+import type { DiscordBridge } from './discord.js';
 
 export type CommandRouterDeps = {
   config: any;
@@ -23,11 +24,11 @@ export type CommandRouterDeps = {
   readErrors: (limit?: number) => string[];
   clearErrors: () => void;
   getStatus: () => {
-    deps.getStatus().waState: string;
-    deps.getStatus().pairing: boolean;
-    deps.getStatus().reconnectAttempt: number;
-    deps.getStatus().lastDisconnectCode: number | null;
-    deps.getStatus().lastDisconnectReason: string;
+    waState: string;
+    pairing: boolean;
+    reconnectAttempt: number;
+    lastDisconnectCode: number | null;
+    lastDisconnectReason: string;
   };
   archiveAuth: () => string | null;
   clearReconnectTimer: () => void;
@@ -35,6 +36,11 @@ export type CommandRouterDeps = {
   sleep: (ms: number) => Promise<void>;
   connect: () => Promise<void>;
   resetReconnectState: () => void;
+  enforceMute: (sock: any, M: any) => Promise<boolean> | boolean;
+  dispatchDiscordForMessage: (M: any, message: any, text: string) => boolean;
+  clearMatches: () => void;
+  readMatches: (limit?: number) => string[];
+  scannerFile: () => string;
   uptime: () => string;
   reportError: (category: string, error: unknown) => Promise<void>;
 };
@@ -47,10 +53,11 @@ export function createCommandRouter(deps: CommandRouterDeps) {
     text: string,
     commandReply: (content: any) => Promise<void>,
   ): Promise<void> {
+    const { config, info, success, warning, error, box } = deps;
                   console.log(
                     chalk.magenta(
                       `[CMD] text=${JSON.stringify(text)} ` +
-                      `prefix=${JSON.stringify(deps.config.prefix)}`
+                      `prefix=${JSON.stringify(config.prefix)}`
                     )
                   );
       
@@ -59,7 +66,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                    * command processing.
                    */
                   const muted =
-                    await enforceMute(
+                    await deps.enforceMute(
                       currentSock,
                       M,
                     );
@@ -73,7 +80,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                    * Its network I/O is always detached from reception.
                    */
                   if (
-                    sideEffects.dispatchDiscordForMessage(
+                    deps.dispatchDiscordForMessage(
                       M,
                       message,
                       text,
@@ -87,7 +94,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                    */
                   if (
                     !text.startsWith(
-                      deps.config.prefix,
+                      config.prefix,
                     )
                   ) {
                     return;
@@ -95,7 +102,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
       
                   const body =
                     text.slice(
-                      deps.config.prefix.length,
+                      config.prefix.length,
                     ).trim();
       
                   if (!body) {
@@ -154,7 +161,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                           '📖 M_D TOOL HELP',
                           [
                             'GENERAL',
-                            `${deps.config.prefix}help  — show commands`,
+                            `${config.prefix}help  — show commands`,
                             `${deps.config.prefix}hi    — bot online check`,
                             '',
                             '📡 SCANNER',
@@ -277,8 +284,8 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                           text: info(
                             '🔓 CONFIG DECRYPT',
                             [
-                              `Status : ${deps.decryptEnabled() ? 'ON' : 'OFF'}`,
-                              `Log file : ${deps.decryptLogFile()}`,
+                              `Status : ${deps.decrypt.decryptEnabled() ? 'ON' : 'OFF'}`,
+                              `Log file : ${deps.decrypt.decryptLogFile()}`,
                             ],
                           ),
                         },
@@ -368,7 +375,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                     let decrypted = false;
       
                     if (hat) {
-                      decrypted = await deps.decryptHatFromMessage(currentSock, M);
+                      decrypted = await deps.decrypt.decryptHatFromMessage(currentSock, M);
                       deps.decrypt.logDecrypt(
                         'decrypt-hat',
                         M.key.remoteJid || '',
@@ -376,7 +383,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                         decrypted,
                       );
                     } else if (hc) {
-                      decrypted = await deps.decryptHcFromMessage(currentSock, M);
+                      decrypted = await deps.decrypt.decryptHcFromMessage(currentSock, M);
                       deps.decrypt.logDecrypt(
                         'decrypt-hc',
                         M.key.remoteJid || '',
@@ -441,7 +448,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                     }
       
                     if (action === 'clear') {
-                      clearMatches();
+                      deps.clearMatches();
       
                       await commandReply({
                         
@@ -467,7 +474,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
       
                     if (action === 'logs') {
                       const lines =
-                        readMatches(
+                        deps.readMatches(
                           Number(args[1]) || 50,
                         );
       
@@ -602,7 +609,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                                 : 'disconnected'
                             }`,
                             `Discord target: ${
-                              deps.config.discordTarget ||
+                              config.discordTarget ||
                               'not set'
                             }`,
                             `Reconnect attempt: ${
