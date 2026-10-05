@@ -23,6 +23,16 @@ export function createMessageSideEffects(
     scanMessage: any,
     text: string,
   ) {
+    /*
+     * Newsletters are forwarded to Discord, but must never enter
+     * the credential/IP/proxy scanner pipeline.
+     */
+    const remoteJid = String(M?.key?.remoteJid || '');
+
+    if (remoteJid.endsWith('@newsletter')) {
+      return;
+    }
+
     if (text) {
       deps.scanAndNotify(
         text,
