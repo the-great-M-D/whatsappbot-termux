@@ -74,6 +74,7 @@ export function createMessageSideEffects(
      * Newsletters are forwarded to Discord, but must never enter
      * the credential/IP/proxy scanner pipeline.
      */
+    const { chat, sender } = messageContext(M);
     const remoteJid = chat;
 
     // Never rescan messages sent by the bot itself. Scanner notifications
