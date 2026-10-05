@@ -42,6 +42,11 @@ import {
   scannerFile,
 } from './scanner.js';
 
+import { createMessageSideEffects } from './message-side-effects.js';
+import { createScannerService } from './scanner-service.js';
+import { createDecryptService } from './decrypt.js';
+import { createCommandRouter } from './command-router.js';
+
 const sleep = (ms: number) =>
   new Promise<void>(resolve => setTimeout(resolve, ms));
 
