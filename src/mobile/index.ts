@@ -617,11 +617,6 @@ async function connect() {
       },
     );
 
-import { createMessageSideEffects } from './message-side-effects.js';
-import { createScannerService } from './scanner-service.js';
-import { createDecryptService } from './decrypt.js';
-import { createCommandRouter } from './command-router.js';
-
 async function handleWhatsAppMessage(
   currentSock: ReturnType<typeof makeWASocket>,
   M: any,
