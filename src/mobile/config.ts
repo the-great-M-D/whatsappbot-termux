@@ -28,5 +28,7 @@ export const config = {
   allowedCommands: csv(process.env.DEV_ALLOWED_COMMANDS),
   allowedScripts: csv(process.env.DEV_ALLOWED_SCRIPTS),
   shellTimeout: Number(process.env.DEV_TIMEOUT_MS || 15000),
-  maxOutput: Number(process.env.DEV_MAX_OUTPUT || 12000)
+  maxOutput: Number(process.env.DEV_MAX_OUTPUT || 12000),
+  ignoreOfflineMessages:
+    String(process.env.IGNORE_OFFLINE_MESSAGES || 'true').toLowerCase() !== 'false'
 };
