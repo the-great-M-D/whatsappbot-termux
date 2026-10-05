@@ -935,6 +935,10 @@ const commandRouter = createCommandRouter({
   },
   sleep,
   connect,
+  resetReconnectState: () => {
+    pairing = false;
+    reconnectAttempt = 0;
+  },
   uptime,
   reportError,
 });
