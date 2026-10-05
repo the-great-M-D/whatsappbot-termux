@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { Worker } from 'node:worker_threads';
 
 import makeWASocket, {
   DisconnectReason,
@@ -81,7 +80,6 @@ let lastDisconnectReason = '';
 const errorAlertTimes = new Map<string, number>();
 const ERROR_ALERT_COOLDOWN = 5 * 60 * 1000;
 
-let scannerEnabled = true;
 
 function ensureDirs() {
   fs.mkdirSync(config.authDir, { recursive: true });
@@ -282,210 +280,6 @@ function scheduleReconnect(reason: string) {
 }
 
 
-/*
- * Cache of group JID -> group name, so scanner
- * alerts read "My Group" instead of
- * "1234-5678@g.us".
- */
-const chatNames = new Map<string, string>();
-
-async function chatDisplayName(
-  sock: ReturnType<typeof makeWASocket>,
-  jid: string,
-) {
-  if (!jid) {
-    return 'unknown';
-  }
-
-  const cached = chatNames.get(jid);
-
-  if (cached) {
-    return cached;
-  }
-
-  if (jid.endsWith('@g.us')) {
-    try {
-      const meta = await sock.groupMetadata(
-        jid,
-      );
-
-      const name = meta?.subject || jid;
-
-      chatNames.set(jid, name);
-
-      return name;
-    } catch {
-      return jid;
-    }
-  }
-
-  chatNames.set(jid, jid);
-
-  return jid;
-}
-
-type ScannerResult = {
-  id: number;
-  ok: boolean;
-  fresh?: Array<{
-    type: string;
-    value: string;
-    source: string;
-    chat: string;
-    sender: string;
-    path: string;
-  }>;
-  error?: string;
-};
-
-let scannerJobId = 0;
-
-const scannerWorker = new Worker(
-  new URL('./scanner-worker.js', import.meta.url),
-);
-
-async function notifyScannerResult(
-  result: ScannerResult,
-) {
-  const fresh = result.fresh || [];
-
-  if (!result.ok) {
-    console.error(
-      chalk.gray('[SCANNER] worker failed:'),
-      result.error || 'unknown error',
-    );
-    return;
-  }
-
-  if (!fresh.length || !sock) {
-    return;
-  }
-
-  /*
-   * Notification is deliberately outside the WhatsApp
-   * message event handler. Group metadata, owner sends,
-   * and Discord API waits cannot delay command handling.
-   */
-  const chatName =
-    await chatDisplayName(sock, fresh[0]?.chat || '');
-
-  const lines = [
-    `[SCANNER] ${fresh.length} new match` +
-      `${fresh.length === 1 ? '' : 'es'} (${fresh[0]?.source || 'scan'})`,
-  ];
-
-  for (const match of fresh.slice(0, 25)) {
-    const parts = [
-      `${match.type}: ${match.value}`,
-      match.path ? `path=${match.path}` : '',
-      `sender=${match.sender || 'unknown'}`,
-      `chat=${chatName}`,
-    ].filter(Boolean);
-
-    lines.push(parts.join(' | '));
-  }
-
-  if (fresh.length > 25) {
-    lines.push(
-      `...and ${fresh.length - 25} more`,
-    );
-  }
-
-  const notificationText =
-    lines.join('\n').slice(0, 6000);
-
-  for (const owner of config.owners) {
-    try {
-      await sock.sendMessage(owner, {
-        text: notificationText,
-      });
-    } catch (error) {
-      console.error(
-        chalk.gray(
-          '[SCANNER] owner notification failed:',
-        ),
-        errorText(error),
-      );
-    }
-  }
-
-  try {
-    await discord.scanner(
-      fresh.map(match => ({
-        type: match.type,
-        value: match.value,
-        source: match.source,
-        chat: chatName,
-        sender: match.sender,
-        path: match.path,
-      })),
-    );
-  } catch (error) {
-    console.error(
-      chalk.gray(
-        '[SCANNER] Discord notification failed:',
-      ),
-      errorText(error),
-    );
-  }
-}
-
-scannerWorker.on(
-  'message',
-  (result: ScannerResult) => {
-    void notifyScannerResult(result).catch(
-      error => {
-        console.error(
-          chalk.gray(
-            '[SCANNER] notification handler failed:',
-          ),
-          errorText(error),
-        );
-      },
-    );
-  },
-);
-
-scannerWorker.on('error', error => {
-  console.error(
-    chalk.gray('[SCANNER] worker error:'),
-    errorText(error),
-  );
-});
-
-scannerWorker.on('exit', code => {
-  if (code !== 0) {
-    console.error(
-      chalk.gray(
-        `[SCANNER] worker exited with code ${code}`,
-      ),
-    );
-  }
-});
-
-function scanAndNotify(
-  text: string,
-  source: string,
-  chat: string,
-  sender: string,
-) {
-  if (!scannerEnabled || !text.trim()) {
-    return;
-  }
-
-  /*
-   * Fire-and-forget. The WhatsApp message handler
-   * never waits for scanning, filesystem I/O, group
-   * metadata, owner notifications, or Discord.
-   */
-  scannerWorker.postMessage({
-    id: ++scannerJobId,
-    text,
-    source,
-    chat,
-    sender,
-  });
-}
 async function requestPairingCode(
   state: Awaited<
     ReturnType<typeof useMultiFileAuthState>
@@ -1388,6 +1182,7 @@ async function connect() {
     );
 
 import { createMessageSideEffects } from './message-side-effects.js';
+import { createScannerService } from './scanner-service.js';
 
 async function handleWhatsAppMessage(
   currentSock: ReturnType<typeof makeWASocket>,
