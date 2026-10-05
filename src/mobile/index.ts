@@ -13,6 +13,11 @@ import makeWASocket, {
 import chalk from 'chalk';
 
 import { config } from './config.js';
+import {
+  extractMessageText,
+  unwrapMessageContent,
+} from './message-utils.js';
+
 import { DiscordBridge } from './discord.js';
 import { appendError, clearErrors, readErrors, readHistory } from './state.js';
 import { configCommand } from './config-command.js';
@@ -1133,38 +1138,6 @@ async function decryptHatFromMessage(
   }
 }
 
-function unwrapMessageContent(message: any): any {
-  let current = message;
-  let depth = 0;
-
-  while (current && depth < 8) {
-    const nested =
-      current.ephemeralMessage?.message ||
-      current.viewOnceMessage?.message ||
-      current.viewOnceMessageV2?.message ||
-      current.viewOnceMessageV2Extension?.message ||
-      current.editedMessage?.message ||
-      current.documentWithCaptionMessage?.message;
-
-    if (!nested) break;
-    current = nested;
-    depth++;
-  }
-
-  return current || message;
-}
-
-function extractMessageText(message: any): string {
-  const content = unwrapMessageContent(message);
-  return (
-    content?.conversation ||
-    content?.extendedTextMessage?.text ||
-    content?.imageMessage?.caption ||
-    content?.videoMessage?.caption ||
-    content?.documentMessage?.caption ||
-    ''
-  );
-}
 async function connect() {
   if (connectInProgress) {
     return;
