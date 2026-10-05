@@ -941,6 +941,12 @@ const commandRouter = createCommandRouter({
   },
   uptime,
   reportError,
+  enforceMute,
+  dispatchDiscordForMessage: (M, message, text) =>
+    sideEffects.dispatchDiscordForMessage(M, message, text),
+  clearMatches,
+  readMatches,
+  scannerFile,
 });
 
 const sideEffects = createMessageSideEffects({
