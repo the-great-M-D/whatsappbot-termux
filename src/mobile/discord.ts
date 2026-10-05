@@ -221,6 +221,61 @@ export class DiscordBridge {
     dlog(chalk.magenta('SCANNER OK'), 'sent');
   }
 
+  /*
+   * Newsletter forwarding has its own path. It is intentionally async
+   * because Discord/webhook I/O may wait for readiness, but callers from
+   * WhatsApp MUST invoke it detached (void ...), never await it.
+   */
+  async fromNewsletter(sender: string, name: string, text: string) {
+    if (!text.trim()) return;
+
+    const payload = '[Newsletter] ' + name + ': ' + text;
+
+    if (config.discordWebhookUrl) {
+      await this.webhook(payload);
+      appendHistory({
+        ts: Date.now(),
+        direction: 'whatsapp',
+        whatsappJid: sender,
+        whatsappSender: name,
+        discordChannelId: config.discordChannelId,
+        text: payload,
+      });
+      dlog(chalk.green('NEWSLETTER -> WEBHOOK'), chalk.white(name));
+      return;
+    }
+
+    if (!this.client || !config.discordChannelId) return;
+
+    if (!this.client.isReady()) {
+      const ready = await this.waitUntilReady();
+      if (!ready) {
+        console.error(
+          chalk.red('[DISCORD]'),
+          chalk.bold('NEWSLETTER SKIPPED'),
+          chalk.gray('Discord client is not ready.'),
+        );
+        return;
+      }
+    }
+
+    const ch = await this.client.channels.fetch(config.discordChannelId);
+    if (!ch || !ch.isTextBased() || !('send' in ch)) return;
+
+    await ch.send(payload.slice(0, 1900));
+
+    appendHistory({
+      ts: Date.now(),
+      direction: 'whatsapp',
+      whatsappJid: sender,
+      whatsappSender: name,
+      discordChannelId: config.discordChannelId,
+      text: payload,
+    });
+
+    dlog(chalk.green('NEWSLETTER -> DISCORD'), chalk.white(name));
+  }
+
   async fromWA(sender: string, name: string, text: string, messageId?: string, fromMe = false) {
     // Do not echo messages sent by the WhatsApp bot itself back into Discord.
     // This prevents !wa from producing a Discord command + webhook echo pair.
