@@ -1,12 +1,10 @@
 import fs from 'node:fs';
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 
 import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   useMultiFileAuthState,
-  downloadContentFromMessage,
 } from '@whiskeysockets/baileys';
 
 import chalk from 'chalk';
@@ -370,7 +368,365 @@ async function requestPairingCode(
 }
 
 
-async function runHatDecrypt(
+import {
+  extractMessageText,
+  unwrapMessageContent,
+} from './message-utils.js';
+
+import { DiscordBridge } from './discord.js';
+import { appendError, clearErrors, readErrors, readHistory } from './state.js';
+import { configCommand } from './config-command.js';
+import {
+  enforceMute,
+  moderate,
+  isAdmin,
+} from './moderation.js';
+import { dev } from './dev.js';
+import {
+  box,
+  success,
+  error,
+  warning,
+  info,
+  kv,
+} from './output.js';
+
+import {
+  scanText,
+  saveMatches,
+  savePayloadRecord,
+  readMatches,
+  clearMatches,
+  scannerFile,
+} from './scanner.js';
+
+const sleep = (ms: number) =>
+  new Promise<void>(resolve => setTimeout(resolve, ms));
+
+const normalizeNumber = (value: string) =>
+  value.replace(/[^0-9]/g, '');
+
+const authBackupRoot =
+  '/storage/1FC3-111D/whatsapp-auth-backups';
+
+let sock: ReturnType<typeof makeWASocket> | null = null;
+
+let waState:
+  | 'starting'
+  | 'pairing'
+  | 'connected'
+  | 'disconnected' = 'starting';
+
+let pairing = false;
+let connectInProgress = false;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+let reconnectAttempt = 0;
+
+/*
+ * Messages older than this connection start time are treated as offline
+ * backlog and ignored when IGNORE_OFFLINE_MESSAGES=true.
+ */
+let messageCutoffUnix = 0;
+let messageCutoffReady = false;
+
+let lastDisconnectCode: number | null = null;
+let lastDisconnectReason = '';
+
+const errorAlertTimes = new Map<string, number>();
+const ERROR_ALERT_COOLDOWN = 5 * 60 * 1000;
+
+
+function ensureDirs() {
+  fs.mkdirSync(config.authDir, { recursive: true });
+  fs.mkdirSync(config.dataDir, { recursive: true });
+}
+
+function uptime() {
+  const total = Math.floor(process.uptime());
+
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+
+  return `${hours}h ${minutes}m ${seconds}s`;
+}
+
+function errorText(error: unknown) {
+  if (error instanceof Error) {
+    return error.stack || error.message;
+  }
+
+  return String(error);
+}
+
+function jidNumber(jid: string): string {
+  return String(jid || '')
+    .split('@')[0]
+    .split(':')[0]
+    .replace(/[^0-9]/g, '');
+}
+
+function isOwner(jid: string) {
+  const incoming = jidNumber(jid);
+
+  if (!incoming) {
+    console.log(chalk.red(`[OWNER] empty sender JID: ${jid}`));
+    return false;
+  }
+
+  const owners = config.owners
+    .map(owner => jidNumber(owner))
+    .filter(Boolean);
+
+  const matched = owners.includes(incoming);
+
+  console.log(
+    matched
+      ? chalk.green(`[OWNER] authorized ${incoming}`)
+      : chalk.red(`[OWNER] denied ${incoming} owners=${owners.join(',')}`)
+  );
+
+  return matched;
+}
+
+function isCommandAuthorized(M: any) {
+  // Commands sent by the bot account itself (fromMe=true) are trusted.
+  // This allows commands issued from the bot's own linked-device session.
+  if (M?.key?.fromMe === true) {
+    console.log(chalk.green('[COMMAND] authorized: bot self'));
+    return true;
+  }
+
+  return isOwner(
+    M?.key?.participant ||
+      M?.key?.remoteJid ||
+      '',
+  );
+}
+
+async function ownerAlert(text: string) {
+  if (!sock || waState !== 'connected') {
+    return;
+  }
+
+  if (!config.owners.length) {
+    return;
+  }
+
+  try {
+    for (const owner of config.owners) {
+      await sock.sendMessage(owner, { text });
+    }
+  } catch (error) {
+    console.error(
+      chalk.gray('[OWNER ALERT] skipped:'),
+      errorText(error),
+    );
+  }
+}
+
+async function reportError(
+  category: string,
+  error: unknown,
+) {
+  const message = errorText(error);
+
+  appendError(category, error);
+
+  console.error(
+    chalk.red(`[ERROR:${category}]`),
+    message,
+  );
+
+  const now = Date.now();
+  const previous = errorAlertTimes.get(category) || 0;
+
+  if (
+    now - previous <
+    ERROR_ALERT_COOLDOWN
+  ) {
+    return;
+  }
+
+  errorAlertTimes.set(category, now);
+
+  await ownerAlert(
+    [
+      'Bot error',
+      `Category: ${category}`,
+      `Time: ${new Date(now).toISOString()}`,
+      `Uptime: ${uptime()}`,
+      '',
+      message.slice(0, 2500),
+    ].join('\n'),
+  );
+}
+
+function archiveAuth() {
+  if (!fs.existsSync(config.authDir)) {
+    return null;
+  }
+
+  const files = fs.readdirSync(config.authDir);
+
+  if (!files.length) {
+    return null;
+  }
+
+  fs.mkdirSync(authBackupRoot, {
+    recursive: true,
+  });
+
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[:.]/g, '-');
+
+  const destination = path.join(
+    authBackupRoot,
+    stamp,
+  );
+
+  fs.renameSync(
+    config.authDir,
+    destination,
+  );
+
+  fs.mkdirSync(config.authDir, {
+    recursive: true,
+  });
+
+  return destination;
+}
+
+function scheduleReconnect(reason: string) {
+  if (reconnectTimer) {
+    return;
+  }
+
+  if (waState === 'connected') {
+    return;
+  }
+
+  reconnectAttempt++;
+
+  const delay = Math.min(
+    30_000,
+    2_000 *
+      Math.pow(2, reconnectAttempt - 1),
+  );
+
+  console.log(
+    chalk.yellow(
+      `[WA] Reconnecting in ${Math.round(delay / 1000)}s ` +
+      `(attempt ${reconnectAttempt}) — ${reason}`,
+    ),
+  );
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+
+    void connect().catch(error => {
+      void reportError(
+        'reconnect',
+        error,
+      );
+    });
+  }, delay);
+}
+
+
+async function requestPairingCode(
+  state: Awaited<
+    ReturnType<typeof useMultiFileAuthState>
+  >,
+) {
+  if (pairing) {
+    return;
+  }
+
+  if (state.state.creds.registered) {
+    return;
+  }
+
+  const phone =
+    normalizeNumber(config.phone);
+
+  if (!phone) {
+    console.log(
+      chalk.yellow(
+        '[WA] WA_PHONE_NUMBER is not configured.',
+      ),
+    );
+
+    return;
+  }
+
+  if (!sock) {
+    return;
+  }
+
+  pairing = true;
+  waState = 'pairing';
+
+  try {
+    console.log(
+      chalk.cyan(
+        `[WA] Requesting pairing code for +${phone}...`,
+      ),
+    );
+
+    await sleep(1500);
+
+    /*
+     * QR is permanently disabled.
+     */
+    const code =
+      await sock.requestPairingCode(phone);
+
+    console.log('');
+    console.log(
+      chalk.green(
+        '========================================',
+      ),
+    );
+    console.log(
+      chalk.green(
+        `[WA] PAIRING CODE: ${code}`,
+      ),
+    );
+    console.log(
+      chalk.green(
+        '========================================',
+      ),
+    );
+    console.log(
+      'WhatsApp → Settings → Linked devices',
+    );
+    console.log(
+      '→ Link a device → Link with phone number',
+    );
+    console.log('');
+  } catch (error) {
+    pairing = false;
+
+    await reportError(
+      'pairing',
+      error,
+    );
+
+    /*
+     * Do not delete auth and do not
+     * pretend this was a logout.
+     */
+    scheduleReconnect(
+      'pairing request failed',
+    );
+  }
+}
+
+
+async function decrypt.runHatDecrypt(
   inputFile: string,
   outputFile: string,
 ): Promise<{ ok: boolean; output: string }> {
@@ -445,7 +801,7 @@ async function runHatDecrypt(
   });
 }
 
-async function runHcDecrypt(inputFile: string, outputFile: string): Promise<{ ok: boolean; output: string }> {
+async function decrypt.runHcDecrypt(inputFile: string, outputFile: string): Promise<{ ok: boolean; output: string }> {
   return await new Promise(resolve => {
     const script = path.resolve(process.cwd(), 'scripts', 'hc_tool.py');
     const child = spawn('python', [script, 'decrypt', inputFile, outputFile], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -468,7 +824,7 @@ async function runHcDecrypt(inputFile: string, outputFile: string): Promise<{ ok
   });
 }
 
-function findHatDocument(message: any): any | null {
+function decrypt.findHatDocument(message: any): any | null {
   if (
     message?.documentMessage &&
     (
@@ -500,17 +856,17 @@ function findHatDocument(message: any): any | null {
   return null;
 }
 
-function findQuotedHatDocument(message: any): any | null {
+function decrypt.findQuotedHatDocument(message: any): any | null {
   const context =
     message?.extendedTextMessage?.contextInfo;
 
   const quoted =
     context?.quotedMessage;
 
-  return findHatDocument(quoted);
+  return decrypt.findHatDocument(quoted);
 }
 
-function findHcDocument(message: any): any | null {
+function decrypt.findHcDocument(message: any): any | null {
   const document =
     message?.documentMessage ||
     message?.documentWithCaptionMessage?.message?.documentMessage;
@@ -522,24 +878,24 @@ function findHcDocument(message: any): any | null {
     : null;
 }
 
-function findQuotedHcDocument(message: any): any | null {
+function decrypt.findQuotedHcDocument(message: any): any | null {
   const context = message?.extendedTextMessage?.contextInfo;
-  return findHcDocument(context?.quotedMessage);
+  return decrypt.findHcDocument(context?.quotedMessage);
 }
 
 
 
-function decryptSettingFile(): string {
+function decrypt.decryptSettingFile(): string {
   return path.join(config.dataDir, 'decrypt-settings.json');
 }
 
-function decryptLogFile(): string {
+function decrypt.decryptLogFile(): string {
   return path.join(config.dataDir, 'decrypt-logs.jsonl');
 }
 
-function decryptEnabled(): boolean {
+function decrypt.decryptEnabled(): boolean {
   try {
-    const file = decryptSettingFile();
+    const file = decrypt.decryptSettingFile();
 
     if (!fs.existsSync(file)) {
       return false;
@@ -555,13 +911,13 @@ function decryptEnabled(): boolean {
   }
 }
 
-function setDecryptEnabled(enabled: boolean): void {
+function decrypt.setDecryptEnabled(enabled: boolean): void {
   fs.mkdirSync(config.dataDir, {
     recursive: true,
   });
 
   fs.writeFileSync(
-    decryptSettingFile(),
+    decrypt.decryptSettingFile(),
     JSON.stringify(
       {
         enabled,
@@ -573,7 +929,7 @@ function setDecryptEnabled(enabled: boolean): void {
   );
 }
 
-function logDecrypt(
+function decrypt.logDecrypt(
   action: string,
   chat: string,
   sender: string,
@@ -584,7 +940,7 @@ function logDecrypt(
   });
 
   fs.appendFileSync(
-    decryptLogFile(),
+    decrypt.decryptLogFile(),
     JSON.stringify({
       ts: new Date().toISOString(),
       action,
@@ -595,11 +951,11 @@ function logDecrypt(
   );
 }
 
-function recentDecryptLogs(
+function decrypt.recentDecryptLogs(
   limit = 10,
 ): string[] {
   try {
-    const file = decryptLogFile();
+    const file = decrypt.decryptLogFile();
 
     if (!fs.existsSync(file)) {
       return [];
@@ -628,9 +984,9 @@ function recentDecryptLogs(
   }
 }
 
-function clearDecryptLogs(): void {
+function decrypt.clearDecryptLogs(): void {
   try {
-    const file = decryptLogFile();
+    const file = decrypt.decryptLogFile();
 
     if (fs.existsSync(file)) {
       fs.unlinkSync(file);
@@ -638,7 +994,7 @@ function clearDecryptLogs(): void {
   } catch {}
 }
 
-function decryptReplyTarget(M: any): any {
+function decrypt.decryptReplyTarget(M: any): any {
   /*
    * Always make decrypt output a WhatsApp reply.
    * If !decrypt was sent as a reply to a .hat/.hc file,
@@ -665,7 +1021,7 @@ function decryptReplyTarget(M: any): any {
   return M;
 }
 
-async function sendDecryptMessage(
+async function decrypt.sendDecryptMessage(
   currentSock: any,
   M: any,
   payload: any,
@@ -673,12 +1029,12 @@ async function sendDecryptMessage(
   return currentSock.sendMessage(
     M.key.remoteJid!,
     payload,
-    { quoted: decryptReplyTarget(M) },
+    { quoted: decrypt.decryptReplyTarget(M) },
   );
 }
 
-async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> {
-  const document = findHcDocument(M.message) || findQuotedHcDocument(M.message);
+async function decrypt.decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> {
+  const document = decrypt.findHcDocument(M.message) || decrypt.findQuotedHcDocument(M.message);
   if (!document) return false;
 
   const fileName = String(document.fileName || 'file.hc');
@@ -696,10 +1052,10 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
     for await (const chunk of stream) chunks.push(Buffer.from(chunk));
     fs.writeFileSync(inputFile, Buffer.concat(chunks));
 
-    const result = await runHcDecrypt(inputFile, outputFile);
+    const result = await decrypt.runHcDecrypt(inputFile, outputFile);
 
     if (!result.ok) {
-      await sendDecryptMessage(currentSock, M, {
+      await decrypt.sendDecryptMessage(currentSock, M, {
         text: 'HC decrypt failed.\\n\\n' + result.output.slice(0, 3000),
       });
       return true;
@@ -715,7 +1071,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
     );
 
     if (!plaintext.trim()) {
-      await sendDecryptMessage(currentSock, M, {
+      await decrypt.sendDecryptMessage(currentSock, M, {
         text: 'HC decryption completed, but the output is empty.',
       });
       return true;
@@ -723,7 +1079,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
 
     const MAX = 6000;
     for (let i = 0; i < plaintext.length; i += MAX) {
-      await sendDecryptMessage(currentSock, M, {
+      await decrypt.sendDecryptMessage(currentSock, M, {
         text: plaintext.slice(i, i + MAX),
       });
     }
@@ -733,7 +1089,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
   } catch (error) {
     await reportError('hc-decrypt', error);
     try {
-      await sendDecryptMessage(currentSock, M, {
+      await decrypt.sendDecryptMessage(currentSock, M, {
         text: 'HC decrypt failed: ' + errorText(error).slice(0, 2500),
       });
     } catch {}
@@ -744,15 +1100,15 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
   }
 }
 
-async function decryptHatFromMessage(
+async function decrypt.decryptHatFromMessage(
   currentSock: any,
   M: any,
 ): Promise<boolean> {
   const direct =
-    findHatDocument(M.message);
+    decrypt.findHatDocument(M.message);
 
   const quoted =
-    findQuotedHatDocument(M.message);
+    decrypt.findQuotedHatDocument(M.message);
 
   const document =
     direct || quoted;
@@ -827,13 +1183,13 @@ async function decryptHatFromMessage(
     );
 
     const result =
-      await runHatDecrypt(
+      await decrypt.runHatDecrypt(
         inputFile,
         outputFile,
       );
 
     if (!result.ok) {
-      await sendDecryptMessage(currentSock, M, {
+      await decrypt.sendDecryptMessage(currentSock, M, {
           text:
             'Decrypt failed.\n\n' +
             result.output.slice(0, 3000),
@@ -862,7 +1218,7 @@ async function decryptHatFromMessage(
     );
 
     if (!plaintext.trim()) {
-      await sendDecryptMessage(currentSock, M, {
+      await decrypt.sendDecryptMessage(currentSock, M, {
           text: 'Decryption completed, but the output is empty.',
         },
       );
@@ -882,7 +1238,7 @@ async function decryptHatFromMessage(
       i < plaintext.length;
       i += MAX
     ) {
-      await sendDecryptMessage(currentSock, M, {
+      await decrypt.sendDecryptMessage(currentSock, M, {
           text:
             plaintext.slice(
               i,
@@ -906,7 +1262,7 @@ async function decryptHatFromMessage(
     );
 
     try {
-      await sendDecryptMessage(currentSock, M, {
+      await decrypt.sendDecryptMessage(currentSock, M, {
           text:
             'Decrypt failed: ' +
             errorText(error).slice(0, 2500),
@@ -1183,6 +1539,7 @@ async function connect() {
 
 import { createMessageSideEffects } from './message-side-effects.js';
 import { createScannerService } from './scanner-service.js';
+import { createDecryptService } from './decrypt.js';
 
 async function handleWhatsAppMessage(
   currentSock: ReturnType<typeof makeWASocket>,
@@ -1286,26 +1643,26 @@ async function handleWhatsAppMessage(
                     `${config.prefix}decrypt`
                   ) {
                     const hat =
-                      findHatDocument(M.message) ||
-                      findQuotedHatDocument(M.message);
+                      decrypt.findHatDocument(M.message) ||
+                      decrypt.findQuotedHatDocument(M.message);
       
                     const hc =
-                      findHcDocument(M.message) ||
-                      findQuotedHcDocument(M.message);
+                      decrypt.findHcDocument(M.message) ||
+                      decrypt.findQuotedHcDocument(M.message);
       
                     let decrypted = false;
       
                     if (hat) {
-                      decrypted = await decryptHatFromMessage(currentSock, M);
-                      logDecrypt(
+                      decrypted = await decrypt.decryptHatFromMessage(currentSock, M);
+                      decrypt.logDecrypt(
                         'decrypt-hat',
                         M.key.remoteJid || '',
                         M.key.participant || M.key.remoteJid || '',
                         decrypted,
                       );
                     } else if (hc) {
-                      decrypted = await decryptHcFromMessage(currentSock, M);
-                      logDecrypt(
+                      decrypted = await decrypt.decryptHcFromMessage(currentSock, M);
+                      decrypt.logDecrypt(
                         'decrypt-hc',
                         M.key.remoteJid || '',
                         M.key.participant || M.key.remoteJid || '',
@@ -1515,7 +1872,7 @@ async function handleWhatsAppMessage(
                      * !decrypt on
                      */
                     if (action === 'on') {
-                      setDecryptEnabled(true);
+                      decrypt.setDecryptEnabled(true);
       
                       await commandReply({
                         
@@ -1536,7 +1893,7 @@ async function handleWhatsAppMessage(
                      * !decrypt off
                      */
                     if (action === 'off') {
-                      setDecryptEnabled(false);
+                      decrypt.setDecryptEnabled(false);
       
                       await commandReply({
                         
@@ -1562,8 +1919,8 @@ async function handleWhatsAppMessage(
                           text: info(
                             '🔓 CONFIG DECRYPT',
                             [
-                              `Status : ${decryptEnabled() ? 'ON' : 'OFF'}`,
-                              `Log file : ${decryptLogFile()}`,
+                              `Status : ${decrypt.decryptEnabled() ? 'ON' : 'OFF'}`,
+                              `Log file : ${decrypt.decryptLogFile()}`,
                             ],
                           ),
                         },
@@ -1576,7 +1933,7 @@ async function handleWhatsAppMessage(
                      * !decrypt logs
                      */
                     if (action === 'logs') {
-                      const logs = recentDecryptLogs(10);
+                      const logs = decrypt.recentDecryptLogs(10);
       
                       await commandReply({
                         
@@ -1598,7 +1955,7 @@ async function handleWhatsAppMessage(
                         
                           text: info(
                             '📜 DECRYPT LOG FILE',
-                            [decryptLogFile()],
+                            [decrypt.decryptLogFile()],
                           ),
                         },
                       );
@@ -1610,7 +1967,7 @@ async function handleWhatsAppMessage(
                      * !decrypt clear
                      */
                     if (action === 'clear') {
-                      clearDecryptLogs();
+                      decrypt.clearDecryptLogs();
       
                       await commandReply({
                         
@@ -1626,7 +1983,7 @@ async function handleWhatsAppMessage(
                      *
                      * Only decrypt when explicitly enabled.
                      */
-                    if (!decryptEnabled()) {
+                    if (!decrypt.decryptEnabled()) {
                       await commandReply({
                         
                           text: warning(
@@ -1643,26 +2000,26 @@ async function handleWhatsAppMessage(
                     }
       
                     const hat =
-                      findHatDocument(M.message) ||
-                      findQuotedHatDocument(M.message);
+                      decrypt.findHatDocument(M.message) ||
+                      decrypt.findQuotedHatDocument(M.message);
       
                     const hc =
-                      findHcDocument(M.message) ||
-                      findQuotedHcDocument(M.message);
+                      decrypt.findHcDocument(M.message) ||
+                      decrypt.findQuotedHcDocument(M.message);
       
                     let decrypted = false;
       
                     if (hat) {
-                      decrypted = await decryptHatFromMessage(currentSock, M);
-                      logDecrypt(
+                      decrypted = await decrypt.decryptHatFromMessage(currentSock, M);
+                      decrypt.logDecrypt(
                         'decrypt-hat',
                         M.key.remoteJid || '',
                         M.key.participant || M.key.remoteJid || '',
                         decrypted,
                       );
                     } else if (hc) {
-                      decrypted = await decryptHcFromMessage(currentSock, M);
-                      logDecrypt(
+                      decrypted = await decrypt.decryptHcFromMessage(currentSock, M);
+                      decrypt.logDecrypt(
                         'decrypt-hc',
                         M.key.remoteJid || '',
                         M.key.participant || M.key.remoteJid || '',
@@ -2204,6 +2561,11 @@ const scanner = createScannerService({
   getSocket: () => sock,
   owners: config.owners,
   discord,
+});
+
+const decrypt = createDecryptService({
+  scanAndNotify: scanner.scanAndNotify,
+  reportError,
 });
 
 const sideEffects = createMessageSideEffects({
