@@ -81,6 +81,13 @@ export function createMessageSideEffects(
     message: any,
     text: string,
   ): boolean {
+    // Messages sent by the bot must never be forwarded back to Discord.
+    // They still return false so owner-issued !commands can continue
+    // through the normal command router.
+    if (M?.key?.fromMe === true) {
+      return false;
+    }
+
     const isNewsletter =
       String(M.key.remoteJid || '').endsWith('@newsletter');
 
