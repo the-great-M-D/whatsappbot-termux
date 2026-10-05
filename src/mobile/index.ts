@@ -1,11 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import makeWASocket, {
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  useMultiFileAuthState,
-} from '@whiskeysockets/baileys';
+import makeWASocket from '@whiskeysockets/baileys';
 
 import chalk from 'chalk';
 
@@ -42,49 +38,15 @@ import { createScannerService } from './scanner-service.js';
 import { createDecryptService } from './decrypt.js';
 import { createCommandRouter } from './command-router.js';
 import { createWhatsAppMessageHandler } from './message-handler.js';
+import { createConnectionManager } from './connection-manager.js';
 
 const sleep = (ms: number) =>
   new Promise<void>(resolve => setTimeout(resolve, ms));
 
-const normalizeNumber = (value: string) =>
-  value.replace(/[^0-9]/g, '');
-
 const authBackupRoot =
   '/storage/1FC3-111D/whatsapp-auth-backups';
 
-let sock: ReturnType<typeof makeWASocket> | null = null;
-
-let waState:
-  | 'starting'
-  | 'pairing'
-  | 'connected'
-  | 'disconnected' = 'starting';
-
-let pairing = false;
-let connectInProgress = false;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-let reconnectAttempt = 0;
-
-/*
- * WhatsApp 440 means the current session was replaced elsewhere.
- * Do not loop forever if the session keeps getting replaced.
- */
-let connectionReplacedCount = 0;
-let connectionReplacedWindowStartedAt = 0;
-let automaticReconnectBlocked = false;
-const CONNECTION_REPLACED_WINDOW_MS = 60_000;
-const CONNECTION_REPLACED_MAX = 3;
-
-/*
- * Messages older than this connection start time are treated as offline
- * backlog and ignored when IGNORE_OFFLINE_MESSAGES=true.
- */
-let messageCutoffUnix = 0;
-let messageCutoffReady = false;
-
-let lastDisconnectCode: number | null = null;
-let lastDisconnectReason = '';
+let connectionManager: ReturnType<typeof createConnectionManager> | null = null;
 
 const errorAlertTimes = new Map<string, number>();
 const ERROR_ALERT_COOLDOWN = 5 * 60 * 1000;
@@ -159,7 +121,12 @@ function isCommandAuthorized(M: any) {
 }
 
 async function ownerAlert(text: string) {
-  if (!sock || waState !== 'connected') {
+  const currentSock = connectionManager?.getSocket();
+
+  if (
+    !currentSock ||
+    connectionManager?.getStatus().waState !== 'connected'
+  ) {
     return;
   }
 
@@ -169,7 +136,7 @@ async function ownerAlert(text: string) {
 
   try {
     for (const owner of config.owners) {
-      await sock.sendMessage(owner, { text });
+      await currentSock.sendMessage(owner, { text });
     }
   } catch (error) {
     console.error(
@@ -252,603 +219,41 @@ function archiveAuth() {
   return destination;
 }
 
-function scheduleReconnect(reason: string) {
-  if (reconnectTimer) {
-    return;
-  }
-
-  if (waState === 'connected') {
-    return;
-  }
-
-  if (automaticReconnectBlocked) {
-    console.log(
-      chalk.yellow(
-        '[WA] Automatic reconnect is blocked after repeated 440 conflicts.',
-      ),
-    );
-    return;
-  }
-
-  reconnectAttempt++;
-
-  const delay = Math.min(
-    30_000,
-    2_000 *
-      Math.pow(2, reconnectAttempt - 1),
-  );
-
-  console.log(
-    chalk.yellow(
-      `[WA] Reconnecting in ${Math.round(delay / 1000)}s ` +
-      `(attempt ${reconnectAttempt}) — ${reason}`,
-    ),
-  );
-
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-
-    void connect().catch(error => {
-      void reportError(
-        'reconnect',
-        error,
-      );
-    });
-  }, delay);
-}
-
-
-async function requestPairingCode(
-  state: Awaited<
-    ReturnType<typeof useMultiFileAuthState>
-  >,
-) {
-  if (pairing) {
-    return;
-  }
-
-  if (state.state.creds.registered) {
-    return;
-  }
-
-  const phone =
-    normalizeNumber(config.phone);
-
-  if (!phone) {
-    console.log(
-      chalk.yellow(
-        '[WA] WA_PHONE_NUMBER is not configured.',
-      ),
-    );
-
-    return;
-  }
-
-  if (!sock) {
-    return;
-  }
-
-  pairing = true;
-  waState = 'pairing';
-
-  try {
-    console.log(
-      chalk.cyan(
-        `[WA] Requesting pairing code for +${phone}...`,
-      ),
-    );
-
-    await sleep(1500);
-
-    /*
-     * QR is permanently disabled.
-     */
-    const code =
-      await sock.requestPairingCode(phone);
-
-    console.log('');
-    console.log(
-      chalk.green(
-        '========================================',
-      ),
-    );
-    console.log(
-      chalk.green(
-        `[WA] PAIRING CODE: ${code}`,
-      ),
-    );
-    console.log(
-      chalk.green(
-        '========================================',
-      ),
-    );
-    console.log(
-      'WhatsApp → Settings → Linked devices',
-    );
-    console.log(
-      '→ Link a device → Link with phone number',
-    );
-    console.log('');
-  } catch (error) {
-    pairing = false;
-
-    await reportError(
-      'pairing',
-      error,
-    );
-
-    /*
-     * Do not delete auth and do not
-     * pretend this was a logout.
-     */
-    scheduleReconnect(
-      'pairing request failed',
-    );
-  }
-}
-
-
-async function connect() {
-  /*
-   * Never create a second Baileys socket while the current socket is
-   * still active. Two sockets using the same WhatsApp auth state can
-   * replace each other and produce DisconnectReason.connectionReplaced
-   * (440 / "Stream Errored (conflict)").
-   */
-  if (connectInProgress) {
-    return;
-  }
-
-  if (
-    sock &&
-    (
-      waState === 'starting' ||
-      waState === 'pairing' ||
-      waState === 'connected'
-    )
-  ) {
-    console.log(
-      chalk.gray(
-        '[WA] connect() ignored: socket already active.',
-      ),
-    );
-    return;
-  }
-
-  connectInProgress = true;
-  messageCutoffReady = false;
-  messageCutoffUnix = 0;
-
-  try {
-    ensureDirs();
-
-    waState = 'starting';
-
-    const {
-      state,
-      saveCreds,
-    } = await useMultiFileAuthState(
-      config.authDir,
-    );
-
-    let version:
-      | [number, number, number]
-      | undefined;
-
-    try {
-      const latest =
-        await fetchLatestBaileysVersion();
-
-      version = latest.version;
-
-      console.log(
-        chalk.gray(
-          `[WA] Version: ${version.join('.')}`,
-        ),
-      );
-    } catch (error) {
-      console.log(
-        chalk.yellow(
-          '[WA] Could not fetch latest WhatsApp version.',
-        ),
-      );
-
-      console.log(
-        chalk.gray(
-          errorText(error),
-        ),
-      );
-    }
-
-    /*
-     * Deliberately no pino import.
-     *
-     * QR remains disabled.
-     *
-     * Do not force a fake browser identity.
-     */
-    const options: any = {
-      auth: state,
-      printQRInTerminal: false,
-      syncFullHistory: false,
-      markOnlineOnConnect: false,
-      connectTimeoutMs: 60_000,
-      defaultQueryTimeoutMs: 60_000,
-      keepAliveIntervalMs: 20_000,
-      retryRequestDelayMs: 2_000,
-    };
-
-    if (version) {
-      options.version = version;
-    }
-
-    sock = makeWASocket(options);
-
-    const currentSock = sock;
-
-    currentSock.ev.on(
-      'creds.update',
-      saveCreds,
-    );
-
-    currentSock.ev.on(
-      'connection.update',
-      async update => {
-        const {
-          connection,
-          lastDisconnect,
-        } = update;
-
-        if (connection === 'connecting') {
-          waState = 'starting';
-
-          console.log(
-            chalk.cyan(
-              '[WA] Connecting...',
-            ),
-          );
-
-          return;
-        }
-
-        if (connection === 'open') {
-          /*
-           * A stale socket must never take ownership of global state after
-           * a newer socket has been created.
-           */
-          if (sock !== currentSock) {
-            console.log(
-              chalk.gray(
-                '[WA] Ignoring OPEN event from stale socket.',
-              ),
-            );
-            return;
-          }
-
-          /*
-           * Establish the backlog cutoff only after Baileys reports OPEN.
-           */
-          messageCutoffUnix = Math.floor(Date.now() / 1000);
-          messageCutoffReady = true;
-          waState = 'connected';
-          pairing = false;
-          reconnectAttempt = 0;
-          connectionReplacedCount = 0;
-          connectionReplacedWindowStartedAt = 0;
-          automaticReconnectBlocked = false;
-
-          lastDisconnectCode = null;
-          lastDisconnectReason = '';
-
-          console.log(
-            chalk.green(
-              '[WA] Connected successfully.',
-            ),
-          );
-
-          console.log(
-            chalk.green(
-              `[WA] Uptime: ${uptime()}`,
-            ),
-          );
-
-          /*
-           * Discord is a side-effect subsystem. Never make WhatsApp's
-           * connection/open path wait on Discord startup or its network
-           * latency. A Discord failure must remain isolated from WA.
-           */
-          void discord.start().catch(error => {
-            void reportError(
-              'discord-start',
-              error,
-            );
-          });
-
-          return;
-        }
-
-        if (connection !== 'close') {
-          return;
-        }
-
-        /*
-         * A stale socket may still emit CLOSE after a replacement socket
-         * has already been created. It must not change global connection
-         * state or schedule another reconnect.
-         */
-        if (sock !== currentSock) {
-          console.log(
-            chalk.gray(
-              '[WA] Ignoring CLOSE event from stale socket.',
-            ),
-          );
-          return;
-        }
-
-        messageCutoffReady = false;
-        waState = 'disconnected';
-        sock = null;
-
-        const raw =
-          lastDisconnect?.error as any;
-
-        const statusCode =
-          raw?.output?.statusCode ??
-          raw?.statusCode ??
-          null;
-
-        const reason =
-          raw?.output?.payload?.message ??
-          raw?.message ??
-          'Unknown connection error';
-
-        lastDisconnectCode =
-          typeof statusCode === 'number'
-            ? statusCode
-            : null;
-
-        lastDisconnectReason =
-          String(reason);
-
-        console.error(
-          chalk.red(
-            `[WA] Disconnected code=${
-              statusCode ?? 'unknown'
-            } reason=${reason}`,
-          ),
-        );
-
-        /*
-         * Print the actual Baileys error.
-         * This is important for diagnosing
-         * WhatsApp login failures.
-         */
-        if (raw) {
-          console.error(
-            chalk.gray(
-              errorText(raw),
-            ),
-          );
-        }
-
-        /*
-         * ONLY an explicit loggedOut
-         * disconnect is treated as logout.
-         */
-        const loggedOut =
-          statusCode ===
-          DisconnectReason.loggedOut;
-
-        if (loggedOut) {
-          pairing = false;
-
-          console.error(
-            chalk.red(
-              '[AUTH] WhatsApp explicitly reported logged out.',
-            ),
-          );
-
-          console.error(
-            chalk.yellow(
-              '[AUTH] Auth was NOT deleted.',
-            ),
-          );
-
-          console.error(
-            chalk.yellow(
-              '[AUTH] Use !dev repair when appropriate.',
-            ),
-          );
-
-          return;
-        }
-
-        /*
-         * 401 Connection Failure is NOT
-         * automatically treated as logout.
-         */
-        if (statusCode === 401) {
-          console.error(
-            chalk.yellow(
-              '[AUTH] 401 Connection Failure.',
-            ),
-          );
-
-          console.error(
-            chalk.yellow(
-              '[AUTH] Credentials preserved.',
-            ),
-          );
-
-          scheduleReconnect(
-            '401 connection failure',
-          );
-
-          return;
-        }
-
-        if (statusCode === DisconnectReason.connectionReplaced) {
-          const now = Date.now();
-
-          if (
-            !connectionReplacedWindowStartedAt ||
-            now - connectionReplacedWindowStartedAt >
-              CONNECTION_REPLACED_WINDOW_MS
-          ) {
-            connectionReplacedWindowStartedAt = now;
-            connectionReplacedCount = 0;
-          }
-
-          connectionReplacedCount++;
-
-          console.error(
-            chalk.yellow(
-              '[AUTH] 440 connection replaced (' +
-              connectionReplacedCount +
-              '/' +
-              CONNECTION_REPLACED_MAX +
-              ').',
-            ),
-          );
-
-          console.error(
-            chalk.yellow(
-              '[AUTH] Credentials preserved; no auth reset will be performed automatically.',
-            ),
-          );
-
-          if (connectionReplacedCount >= CONNECTION_REPLACED_MAX) {
-            automaticReconnectBlocked = true;
-
-            console.error(
-              chalk.red(
-                '[AUTH] Repeated 440 conflicts detected. Automatic reconnect stopped.',
-              ),
-            );
-
-            console.error(
-              chalk.yellow(
-                '[AUTH] Check WhatsApp → Settings → Linked devices for another active session.',
-              ),
-            );
-
-            console.error(
-              chalk.yellow(
-                '[AUTH] Auth remains intact. Use !dev repair only after confirming the old session is gone.',
-              ),
-            );
-
-            return;
-          }
-
-          scheduleReconnect(
-            '440 connection replaced',
-          );
-
-          return;
-        }
-
-        scheduleReconnect(
-          `${statusCode ?? 'unknown'} ${reason}`,
-        );
-      },
-    );
-
-    currentSock.ev.on(
-      'messages.upsert',
-      ({ messages }) => {
-        /*
-         * Reception is deliberately tiny. Each message gets its own task.
-         */
-        for (const M of messages) {
-          void handleWhatsAppMessage(
-            currentSock,
-            M,
-          );
-        }
-      },
-    );
-
-    /*
-     * New account: request phone
-     * pairing code.
-     */
-    if (
-      !state.creds.registered
-    ) {
-      /*
-       * Wait for the socket to finish the initial
-       * connection handshake before requesting
-       * the phone-number pairing code.
-       */
-      const pairingDeadline = Date.now() + 30_000;
-
-      while (
-        Date.now() < pairingDeadline &&
-        sock === currentSock &&
-        !state.creds.registered
-      ) {
-        if (String(waState) === 'connected') {
-          break;
-        }
-
-        await sleep(500);
-      }
-
-      if (
-        sock === currentSock &&
-        !state.creds.registered &&
-        !pairing
-      ) {
-        await requestPairingCode(
-          {
-            state,
-            saveCreds,
-          },
-        );
-      }
-    }
-
-  } catch (error) {
-    waState = 'disconnected';
-
-    await reportError(
-      'connect',
-      error,
-    );
-
-    scheduleReconnect(
-      'connect() failed',
-    );
-  } finally {
-    connectInProgress = false;
-  }
-}
-
 const discord =
   new DiscordBridge(
     async (
       jid,
       text,
     ) => {
+      const currentSock = connectionManager?.getSocket();
+
       if (
-        !sock ||
-        waState !== 'connected'
+        !currentSock ||
+        connectionManager?.getStatus().waState !== 'connected'
       ) {
         throw new Error(
           'WhatsApp is not connected.',
         );
       }
 
-      return await sock.sendMessage(
+      return await currentSock.sendMessage(
         jid,
         { text },
       );
     },
   );
 
+connectionManager = createConnectionManager({
+  config,
+  sleep,
+  ensureDirs,
+  errorText,
+  reportError,
+  discord,
+});
+
 const scanner = createScannerService({
-  getSocket: () => sock,
+  getSocket: () => connectionManager?.getSocket() || null,
   owners: config.owners,
   discord,
 });
@@ -882,35 +287,15 @@ const commandRouter = createCommandRouter({
   readHistory,
   readErrors,
   clearErrors,
-  getStatus: () => ({
-    waState,
-    pairing,
-    reconnectAttempt,
-    connectionReplacedCount,
-    automaticReconnectBlocked,
-    lastDisconnectCode,
-    lastDisconnectReason,
-  }),
+  getStatus: () => connectionManager!.getStatus(),
   archiveAuth,
-  clearReconnectTimer: () => {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-  },
-  setSocket: (value: ReturnType<typeof makeWASocket> | null) => {
-    sock = value;
-  },
+  clearReconnectTimer: () => connectionManager!.clearReconnectTimer(),
+  setSocket: (value: ReturnType<typeof makeWASocket> | null) =>
+    connectionManager!.setSocket(value),
   sleep,
-  connect,
-  resetReconnectState: () => {
-    pairing = false;
-    reconnectAttempt = 0;
-    connectionReplacedCount = 0;
-    connectionReplacedWindowStartedAt = 0;
-    automaticReconnectBlocked = false;
-  },
-  uptime,
+  connect: () => connectionManager!.connect(),
+  resetReconnectState: () => connectionManager!.resetReconnectState(),
+  uptime: () => connectionManager!.uptime(),
   reportError,
   decryptEnabled: decrypt.decryptEnabled,
   decryptLogFile: decrypt.decryptLogFile,
@@ -930,11 +315,12 @@ const handleWhatsAppMessage =
     info,
     error,
     reportError,
-    getMessageCutoff: () => ({
-      ready: messageCutoffReady,
-      unix: messageCutoffUnix,
-    }),
+    getMessageCutoff: () => connectionManager!.getCutoff(),
   });
+
+connectionManager!.setMessageHandler(
+  handleWhatsAppMessage,
+);
 
 async function startup() {
   ensureDirs();
@@ -991,7 +377,7 @@ async function startup() {
 
   console.log('');
 
-  await connect();
+  await connectionManager!.connect();
 }
 
 void startup().catch(error => {
