@@ -74,7 +74,6 @@ export function createMessageSideEffects(
      * Newsletters are forwarded to Discord, but must never enter
      * the credential/IP/proxy scanner pipeline.
      */
-    const { chat, sender, isGroup } = messageContext(M);
     const remoteJid = chat;
 
     // Never rescan messages sent by the bot itself. Scanner notifications
@@ -122,6 +121,7 @@ export function createMessageSideEffects(
     message: any,
     text: string,
   ): boolean {
+    const { chat, sender } = messageContext(M);
     // Messages sent by the bot must never be forwarded back to Discord.
     // They still return false so owner-issued !commands can continue
     // through the normal command router.
