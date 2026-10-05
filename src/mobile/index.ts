@@ -900,7 +900,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
     const result = await runHcDecrypt(inputFile, outputFile);
 
     if (!result.ok) {
-      await sendDecryptMessage(currentSock, M, M.key.remoteJid!, {
+      await sendDecryptMessage(currentSock, M, {
         text: 'HC decrypt failed.\\n\\n' + result.output.slice(0, 3000),
       });
       return true;
@@ -916,7 +916,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
     );
 
     if (!plaintext.trim()) {
-      await sendDecryptMessage(currentSock, M, M.key.remoteJid!, {
+      await sendDecryptMessage(currentSock, M, {
         text: 'HC decryption completed, but the output is empty.',
       });
       return true;
@@ -924,7 +924,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
 
     const MAX = 6000;
     for (let i = 0; i < plaintext.length; i += MAX) {
-      await sendDecryptMessage(currentSock, M, M.key.remoteJid!, {
+      await sendDecryptMessage(currentSock, M, {
         text: plaintext.slice(i, i + MAX),
       });
     }
@@ -934,7 +934,7 @@ async function decryptHcFromMessage(currentSock: any, M: any): Promise<boolean> 
   } catch (error) {
     await reportError('hc-decrypt', error);
     try {
-      await sendDecryptMessage(currentSock, M, M.key.remoteJid!, {
+      await sendDecryptMessage(currentSock, M, {
         text: 'HC decrypt failed: ' + errorText(error).slice(0, 2500),
       });
     } catch {}
@@ -1034,9 +1034,7 @@ async function decryptHatFromMessage(
       );
 
     if (!result.ok) {
-      await sendDecryptMessage(currentSock, M, 
-        M.key.remoteJid!,
-        {
+      await sendDecryptMessage(currentSock, M, {
           text:
             'Decrypt failed.\n\n' +
             result.output.slice(0, 3000),
@@ -1065,9 +1063,7 @@ async function decryptHatFromMessage(
     );
 
     if (!plaintext.trim()) {
-      await sendDecryptMessage(currentSock, M, 
-        M.key.remoteJid!,
-        {
+      await sendDecryptMessage(currentSock, M, {
           text: 'Decryption completed, but the output is empty.',
         },
       );
@@ -1087,9 +1083,7 @@ async function decryptHatFromMessage(
       i < plaintext.length;
       i += MAX
     ) {
-      await sendDecryptMessage(currentSock, M, 
-        M.key.remoteJid!,
-        {
+      await sendDecryptMessage(currentSock, M, {
           text:
             plaintext.slice(
               i,
@@ -1113,9 +1107,7 @@ async function decryptHatFromMessage(
     );
 
     try {
-      await sendDecryptMessage(currentSock, M, 
-        M.key.remoteJid!,
-        {
+      await sendDecryptMessage(currentSock, M, {
           text:
             'Decrypt failed: ' +
             errorText(error).slice(0, 2500),
