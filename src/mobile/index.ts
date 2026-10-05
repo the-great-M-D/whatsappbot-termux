@@ -336,7 +336,6 @@ let scannerJobId = 0;
 
 const scannerWorker = new Worker(
   new URL('./scanner-worker.js', import.meta.url),
-  { type: 'module' },
 );
 
 async function notifyScannerResult(
