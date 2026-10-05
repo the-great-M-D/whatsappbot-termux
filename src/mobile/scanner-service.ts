@@ -107,40 +107,45 @@ export function createScannerService(
     const notificationText =
       lines.join('\n').slice(0, 6000);
 
-    for (const owner of deps.owners) {
-      try {
-        await currentSock.sendMessage(owner, {
+    /*
+     * Scanner notifications are downstream side effects. Do not serialize
+     * owner delivery or Discord delivery behind one another: a slow network
+     * destination must never delay the next scanner result.
+     */
+    const ownerNotifications = deps.owners.map(owner =>
+      currentSock
+        .sendMessage(owner, {
           text: notificationText,
-        });
-      } catch (error) {
-        console.error(
-          chalk.gray('[SCANNER] owner notification failed:'),
-          error instanceof Error
-            ? error.stack || error.message
-            : String(error),
-        );
-      }
-    }
+        })
+        .catch(error => {
+          console.error(
+            chalk.gray('[SCANNER] owner notification failed:'),
+            error instanceof Error
+              ? error.stack || error.message
+              : String(error),
+          );
+        }),
+    );
 
-    try {
-      await deps.discord.scanner(
-        fresh.map(match => ({
-          type: match.type,
-          value: match.value,
-          source: match.source,
-          chat: chatName,
-          sender: match.sender,
-          path: match.path,
-        })),
-      );
-    } catch (error) {
+    void Promise.allSettled(ownerNotifications);
+
+    const discordMatches = fresh.map(match => ({
+      type: match.type,
+      value: match.value,
+      source: match.source,
+      chat: chatName,
+      sender: match.sender,
+      path: match.path,
+    }));
+
+    void deps.discord.scanner(discordMatches).catch(error => {
       console.error(
         chalk.gray('[SCANNER] Discord notification failed:'),
         error instanceof Error
           ? error.stack || error.message
           : String(error),
       );
-    }
+    });
   }
 
   worker.on('message', (result: ScannerResult) => {
