@@ -1471,7 +1471,7 @@ async function handleWhatsAppMessage(
                   /*
                    * Scanner is a separate fire-and-forget subsystem.
                    */
-                  dispatchScannerForMessage(
+                  sideEffects.dispatchScannerForMessage(
                     M,
                     scanMessage,
                     text,
@@ -1563,7 +1563,7 @@ async function handleWhatsAppMessage(
                    * Its network I/O is always detached from reception.
                    */
                   if (
-                    dispatchDiscordForMessage(
+                    sideEffects.dispatchDiscordForMessage(
                       M,
                       message,
                       text,
@@ -2404,6 +2404,13 @@ const discord =
       );
     },
   );
+
+const sideEffects = createMessageSideEffects({
+  scanAndNotify,
+  discord,
+  discordTarget: config.discordTarget,
+  reportError,
+});
 
 async function startup() {
   ensureDirs();
