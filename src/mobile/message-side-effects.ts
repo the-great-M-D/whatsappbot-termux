@@ -18,6 +18,53 @@ export type MessageSideEffectDeps = {
 export function createMessageSideEffects(
   deps: MessageSideEffectDeps,
 ) {
+  /*
+   * WhatsApp has two different identities here:
+   *   remoteJid  = the chat/conversation
+   *   participant = the person who sent the message inside that chat
+   *
+   * In groups, remoteJid must remain the @g.us JID. A participant may be
+   * an @s.whatsapp.net or @lid JID. Never substitute participant for the
+   * chat JID; doing so makes scanner results look like they came from a
+   * private chat and breaks group attribution.
+   */
+  function messageContext(M: any) {
+    const remoteJid = String(M?.key?.remoteJid || '');
+    const participant = String(
+      M?.key?.participant ||
+      M?.message?.extendedTextMessage?.contextInfo?.participant ||
+      M?.message?.imageMessage?.contextInfo?.participant ||
+      M?.message?.videoMessage?.contextInfo?.participant ||
+      remoteJid ||
+      '',
+    );
+
+    return {
+      chat: remoteJid,
+      sender: participant,
+      isGroup: remoteJid.endsWith('@g.us'),
+    };
+  }
+
+  function quotedContext(M: any, scanMessage: any) {
+    const context =
+      scanMessage?.extendedTextMessage?.contextInfo ||
+      scanMessage?.imageMessage?.contextInfo ||
+      scanMessage?.videoMessage?.contextInfo ||
+      scanMessage?.documentMessage?.contextInfo ||
+      {};
+
+    return {
+      quotedMessage: context.quotedMessage,
+      quotedSender: String(
+        context.participant ||
+        context.remoteJid ||
+        M?.key?.participant ||
+        M?.key?.remoteJid ||
+        '',
+      ),
+    };
+  }
   function dispatchScannerForMessage(
     M: any,
     scanMessage: any,
@@ -27,7 +74,8 @@ export function createMessageSideEffects(
      * Newsletters are forwarded to Discord, but must never enter
      * the credential/IP/proxy scanner pipeline.
      */
-    const remoteJid = String(M?.key?.remoteJid || '');
+    const { chat, sender, isGroup } = messageContext(M);
+    const remoteJid = chat;
 
     // Never rescan messages sent by the bot itself. Scanner notifications
     // contain the very IPs/URLs they report and would otherwise feed back
@@ -44,18 +92,13 @@ export function createMessageSideEffects(
       deps.scanAndNotify(
         text,
         'WhatsApp',
-        M.key.remoteJid || '',
-        M.key.participant ||
-          M.key.remoteJid ||
-          '',
+        chat,
+        sender,
       );
     }
 
-    const contextInfo =
-      scanMessage?.extendedTextMessage?.contextInfo;
-
-    const quotedMessage =
-      contextInfo?.quotedMessage;
+    const { quotedMessage, quotedSender } =
+      quotedContext(M, scanMessage);
 
     const quotedText =
       quotedMessage?.conversation ||
@@ -68,10 +111,8 @@ export function createMessageSideEffects(
       deps.scanAndNotify(
         quotedText,
         'WhatsApp reply/quoted message',
-        M.key.remoteJid || '',
-        M.key.participant ||
-          M.key.remoteJid ||
-          '',
+        chat,
+        quotedSender,
       );
     }
   }
@@ -102,9 +143,7 @@ export function createMessageSideEffects(
         `[Newsletter update] messageType=${Object.keys(message || {}).join(',') || 'unknown'}`;
 
       void deps.discord.fromNewsletter(
-        M.key.participant ||
-          M.key.remoteJid ||
-          '',
+        sender,
         M.pushName ||
           M.key.remoteJid ||
           'Newsletter',
@@ -121,7 +160,7 @@ export function createMessageSideEffects(
 
     if (
       deps.discordTarget &&
-      M.key.remoteJid === deps.discordTarget
+      chat === deps.discordTarget
     ) {
       const quoted =
         message.extendedTextMessage?.contextInfo
