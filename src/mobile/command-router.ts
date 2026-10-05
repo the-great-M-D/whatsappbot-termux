@@ -276,8 +276,8 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                           text: info(
                             '🔓 CONFIG DECRYPT',
                             [
-                              `Status : ${deps.decrypt.decryptEnabled() ? 'ON' : 'OFF'}`,
-                              `Log file : ${deps.decrypt.decryptLogFile()}`,
+                              `Status : ${deps.decryptEnabled() ? 'ON' : 'OFF'}`,
+                              `Log file : ${deps.decryptLogFile()}`,
                             ],
                           ),
                         },
@@ -312,7 +312,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                         
                           text: info(
                             '📜 DECRYPT LOG FILE',
-                            [deps.decrypt.decryptLogFile()],
+                            [deps.decryptLogFile()],
                           ),
                         },
                       );
@@ -340,7 +340,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                      *
                      * Only decrypt when explicitly enabled.
                      */
-                    if (!deps.decrypt.decryptEnabled()) {
+                    if (!deps.decryptEnabled()) {
                       await commandReply({
                         
                           text: warning(
@@ -367,7 +367,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                     let decrypted = false;
       
                     if (hat) {
-                      decrypted = await deps.decrypt.decryptHatFromMessage(currentSock, M);
+                      decrypted = await deps.decryptHatFromMessage(currentSock, M);
                       deps.decrypt.logDecrypt(
                         'decrypt-hat',
                         M.key.remoteJid || '',
@@ -375,7 +375,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                         decrypted,
                       );
                     } else if (hc) {
-                      decrypted = await deps.decrypt.decryptHcFromMessage(currentSock, M);
+                      decrypted = await deps.decryptHcFromMessage(currentSock, M);
                       deps.decrypt.logDecrypt(
                         'decrypt-hc',
                         M.key.remoteJid || '',
