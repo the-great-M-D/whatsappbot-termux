@@ -70,22 +70,14 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                     return;
                   }
       
-                  /*
-                   * Discord is a separate side-effect subsystem.
-                   * Its network I/O is always detached from reception.
-                   */
-                  if (
-                    deps.dispatchDiscordForMessage(
-                      M,
-                      message,
-                      text,
-                    )
-                  ) {
-                    return;
-                  }
-
   /*
                    * Commands.
+                   *
+                   * Discord forwarding is started by the WhatsApp receive
+                   * layer before command routing. Keeping it out of this
+                   * function prevents command execution from becoming a
+                   * dependency of Discord/newsletter delivery.
+                   */
                    */
                   if (
                     !text.startsWith(
