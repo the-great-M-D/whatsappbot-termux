@@ -374,7 +374,29 @@ async function requestPairingCode(
 
 
 async function connect() {
+  /*
+   * Never create a second Baileys socket while the current socket is
+   * still active. Two sockets using the same WhatsApp auth state can
+   * replace each other and produce DisconnectReason.connectionReplaced
+   * (440 / "Stream Errored (conflict)").
+   */
   if (connectInProgress) {
+    return;
+  }
+
+  if (
+    sock &&
+    (
+      waState === 'starting' ||
+      waState === 'pairing' ||
+      waState === 'connected'
+    )
+  ) {
+    console.log(
+      chalk.gray(
+        '[WA] connect() ignored: socket already active.',
+      ),
+    );
     return;
   }
 
@@ -476,6 +498,19 @@ async function connect() {
 
         if (connection === 'open') {
           /*
+           * A stale socket must never take ownership of global state after
+           * a newer socket has been created.
+           */
+          if (sock !== currentSock) {
+            console.log(
+              chalk.gray(
+                '[WA] Ignoring OPEN event from stale socket.',
+              ),
+            );
+            return;
+          }
+
+          /*
            * Establish the backlog cutoff only after Baileys reports OPEN.
            */
           messageCutoffUnix = Math.floor(Date.now() / 1000);
@@ -515,8 +550,23 @@ async function connect() {
           return;
         }
 
+        /*
+         * A stale socket may still emit CLOSE after a replacement socket
+         * has already been created. It must not change global connection
+         * state or schedule another reconnect.
+         */
+        if (sock !== currentSock) {
+          console.log(
+            chalk.gray(
+              '[WA] Ignoring CLOSE event from stale socket.',
+            ),
+          );
+          return;
+        }
+
         messageCutoffReady = false;
         waState = 'disconnected';
+        sock = null;
 
         const raw =
           lastDisconnect?.error as any;
