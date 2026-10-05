@@ -1594,8 +1594,6 @@ async function handleWhatsAppMessage(
                   M.key.remoteJid ||
                   'Newsletter',
                 text,
-                M.key.id || undefined,
-                M.key.fromMe === true,
               ).catch(error => {
                 void reportError(
                   'discord-newsletter',
