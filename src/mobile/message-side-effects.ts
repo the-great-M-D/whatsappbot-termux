@@ -29,6 +29,13 @@ export function createMessageSideEffects(
      */
     const remoteJid = String(M?.key?.remoteJid || '');
 
+    // Never rescan messages sent by the bot itself. Scanner notifications
+    // contain the very IPs/URLs they report and would otherwise feed back
+    // into the scanner pipeline.
+    if (M?.key?.fromMe === true) {
+      return;
+    }
+
     if (remoteJid.endsWith('@newsletter')) {
       return;
     }
