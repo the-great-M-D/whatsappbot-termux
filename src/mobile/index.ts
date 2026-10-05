@@ -68,6 +68,7 @@ let reconnectAttempt = 0;
  * backlog and ignored when IGNORE_OFFLINE_MESSAGES=true.
  */
 let messageCutoffUnix = 0;
+let messageCutoffReady = false;
 
 let lastDisconnectCode: number | null = null;
 let lastDisconnectReason = '';
@@ -1139,6 +1140,8 @@ async function connect() {
   }
 
   connectInProgress = true;
+  messageCutoffReady = false;
+  messageCutoffUnix = 0;
 
   try {
     ensureDirs();
@@ -1237,6 +1240,7 @@ async function connect() {
            * Establish the backlog cutoff only after Baileys reports OPEN.
            */
           messageCutoffUnix = Math.floor(Date.now() / 1000);
+          messageCutoffReady = true;
           waState = 'connected';
           pairing = false;
           reconnectAttempt = 0;
@@ -1272,6 +1276,7 @@ async function connect() {
           return;
         }
 
+        messageCutoffReady = false;
         waState = 'disconnected';
 
         const raw =
@@ -1385,6 +1390,15 @@ async function handleWhatsAppMessage(
   try {
     try {
                 if (config.ignoreOfflineMessages) {
+                  /*
+                   * With backlog filtering enabled, anything delivered
+                   * before the socket is OPEN is not admitted to the
+                   * expensive message pipeline.
+                   */
+                  if (!messageCutoffReady) {
+                    return;
+                  }
+
                   const rawTimestamp = M.messageTimestamp;
                   const messageTimestamp =
                     typeof rawTimestamp === 'number'
