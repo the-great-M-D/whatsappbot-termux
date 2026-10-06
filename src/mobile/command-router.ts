@@ -9,6 +9,7 @@ export type CommandRouterDeps = {
   box: (...args: any[]) => string;
   isCommandAuthorized: (M: any) => boolean;
   decrypt: any;
+  sticker: any;
   decryptEnabled: () => boolean;
   decryptLogFile: () => string;
   scanner: any;
@@ -149,6 +150,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                             'GENERAL',
                             `${config.prefix}help  — show commands`,
                             `${deps.config.prefix}hi    — bot online check`,
+                            `${deps.config.prefix}sticker — convert replied .was to sticker`,
                             '',
                             '📡 SCANNER',
                             `${deps.config.prefix}scan`,
@@ -196,6 +198,33 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                     return;
                   }
       
+                  /*
+                   * !sticker
+                   * Reply to a .was animation with this command.
+                   */
+                  if (command === 'sticker') {
+                    const converted =
+                      await deps.sticker.convertWasToSticker(
+                        currentSock,
+                        M,
+                      );
+
+                    if (!converted) {
+                      await commandReply({
+                        text: error(
+                          'STICKER',
+                          [
+                            'No .was file found.',
+                            '',
+                            `Reply to a .was file with ${deps.config.prefix}sticker`,
+                          ],
+                        ),
+                      });
+                    }
+
+                    return;
+                  }
+
                   /*
                    * !decrypt
                    */
