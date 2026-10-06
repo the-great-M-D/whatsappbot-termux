@@ -36,6 +36,7 @@ import {
 import { createMessageSideEffects } from './message-side-effects.js';
 import { createScannerService } from './scanner-service.js';
 import { createDecryptService } from './decrypt.js';
+import { createStickerService } from './sticker.js';
 import { createCommandRouter } from './command-router.js';
 import { createWhatsAppMessageHandler } from './message-handler.js';
 import { createConnectionManager } from './connection-manager.js';
@@ -263,6 +264,10 @@ const decrypt = createDecryptService({
   reportError,
 });
 
+const sticker = createStickerService({
+  reportError,
+});
+
 const sideEffects = createMessageSideEffects({
   scanAndNotify: scanner.scanAndNotify,
   discord,
@@ -279,6 +284,7 @@ const commandRouter = createCommandRouter({
   box,
   isCommandAuthorized,
   decrypt,
+  sticker,
   scanner,
   discord,
   configCommand,
