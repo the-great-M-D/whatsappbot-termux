@@ -60,7 +60,7 @@ def main():
         command = [
             converter, lottie_json, args.output,
             "--width", "512", "--height", "512",
-            "--fps", "30", "--webp-quality", "70",
+            "--fps", "30",
         ]
 
         print("[STICKER] Rendering Lottie animation...", file=sys.stderr)
