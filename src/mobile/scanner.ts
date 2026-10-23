@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isIP } from 'node:net';
 
 export type ScanMatch = {
   type: 'IPv4' | 'IPv6';
@@ -28,7 +29,7 @@ const IPV4 =
   /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 
 const IPV6 =
-  /(?<![\w:])(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}(?![\w:])/g;
+  /(?<![0-9a-fA-F:])(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?![0-9a-fA-F:])/g;g;
 
 function ensure() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -59,10 +60,12 @@ function addMatches(
   }
 
   for (const value of new Set(text.match(IPV6) || [])) {
-    const key = `IPv6:${value.toLowerCase()}`;
+    if (isIP(value) !== 6) continue;
+    const normalized = value.toLowerCase();
+    const key = `IPv6:${normalized}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    matches.push({ type: 'IPv6', value, ts: Date.now(), source, chat, sender, path: matchPath });
+    matches.push({ type: 'IPv6', value: normalized, ts: Date.now(), source, chat, sender, path: matchPath });
   }
 }
 
@@ -165,9 +168,10 @@ export function saveMatches(matches: ScanMatch[]): ScanMatch[] {
 
   const known = new Set(stored);
   const fresh = matches.filter(match => {
-    if (known.has(match.value)) return false;
-    known.add(match.value);
-    stored.push(match.value);
+    const value = match.type === 'IPv6' ? match.value.toLowerCase() : match.value;
+    if (known.has(value)) return false;
+    known.add(value);
+    stored.push(value);
     return true;
   });
 
@@ -202,30 +206,10 @@ export function readMatches(limit = 50): string[] {
 export function clearMatches(): void {
   ensure();
   const tempFile = `${FILE}.tmp`;
-  fs.writeFileSync(tempFile, '[]\\n', { mode: 0o600 });
+  fs.writeFileSync(tempFile, '[]\n', { mode: 0o600 });
   fs.renameSync(tempFile, FILE);
 }
 
 export function scannerFile(): string {
   return FILE;
-}
-
-
-export function scannerFile(): string {
-  return FILE;
-}
-
-export function readMatches(limit = 50): string[] {
-  if (!fs.existsSync(FILE)) return [];
-  const parsed: unknown = JSON.parse(fs.readFileSync(FILE, 'utf8'));
-  if (!Array.isArray(parsed)) return [];
-  return parsed
-    .filter((item): item is string => typeof item === 'string')
-    .slice(-Math.max(0, limit))
-    .reverse();
-}
-
-export function clearMatches(): void {
-  ensure();
-  fs.writeFileSync(FILE, '[]\\n', { mode: 0o600 });
 }
