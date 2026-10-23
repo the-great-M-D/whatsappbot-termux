@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isIP } from 'node:net';
+import { isIP } from 'node:net';
 
 export type ScanMatch = {
   type: 'IPv4' | 'IPv6';
