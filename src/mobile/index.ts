@@ -27,7 +27,6 @@ import {
 import {
   scanText,
   saveMatches,
-  savePayloadRecord,
   readMatches,
   clearMatches,
   scannerFile,
