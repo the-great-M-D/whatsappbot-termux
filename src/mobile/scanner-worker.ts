@@ -1,10 +1,6 @@
 import { parentPort } from 'node:worker_threads';
 
-import {
-  scanText,
-  saveMatches,
-  savePayloadRecord,
-} from './scanner.js';
+import { scanText, saveMatches } from './scanner.js';
 
 type ScanJob = {
   id: number;
@@ -28,24 +24,6 @@ parentPort.on('message', (job: ScanJob) => {
     );
 
     const fresh = saveMatches(matches);
-
-    if (
-      job.source.toLowerCase().includes('decrypted')
-    ) {
-      try {
-        savePayloadRecord(
-          job.text,
-          job.source,
-          job.chat,
-          job.sender,
-        );
-      } catch (error) {
-        console.error(
-          '[SCANNER WORKER] payload record failed:',
-          error,
-        );
-      }
-    }
 
     parentPort!.postMessage({
       id: job.id,
