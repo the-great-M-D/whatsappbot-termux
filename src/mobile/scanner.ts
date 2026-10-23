@@ -181,3 +181,31 @@ export function saveMatches(matches: ScanMatch[]): ScanMatch[] {
 
   return fresh;
 }
+
+
+export function readMatches(limit = 50): string[] {
+  ensure();
+
+  if (!fs.existsSync(FILE)) return [];
+
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((value): value is string => typeof value === 'string')
+      .slice(-Math.min(Math.max(0, limit), 200));
+  } catch {
+    return [];
+  }
+}
+
+export function clearMatches(): void {
+  ensure();
+  const tempFile = `${FILE}.tmp`;
+  fs.writeFileSync(tempFile, '[]\\n', { mode: 0o600 });
+  fs.renameSync(tempFile, FILE);
+}
+
+export function scannerFile(): string {
+  return FILE;
+}
