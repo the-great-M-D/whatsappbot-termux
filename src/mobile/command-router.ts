@@ -443,7 +443,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
       
                       await commandReply({
                         
-                          text: success('📡 SCANNER', ['Status : ON', 'Passive IP/URL scanning enabled.']),
+                          text: success('📡 SCANNER', ['Status : ON', 'IP-address-only scanning enabled; saves JSON.']),
                         },
                       );
       
@@ -455,7 +455,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
       
                       await commandReply({
                         
-                          text: warning('📡 SCANNER', ['Status : OFF', 'Passive IP/URL scanning disabled.']),
+                          text: warning('📡 SCANNER', ['Status : OFF', 'IP-address-only scanning disabled.']),
                         },
                       );
       
@@ -467,7 +467,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
       
                       await commandReply({
                         
-                          text: success('📡 SCANNER', ['Saved matches cleared.']),
+                          text: success('📡 SCANNER', ['Saved IP addresses cleared.']),
                         },
                       );
       
@@ -499,7 +499,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                             '📡 SCANNER LOGS',
                             lines.length
                               ? lines
-                              : ['No scanner matches.'],
+                              : ['No saved IP addresses.'],
                           ),
                         },
                       );
