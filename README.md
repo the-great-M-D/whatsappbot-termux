@@ -155,15 +155,12 @@ Do not delete this directory unless you intentionally want to re-authenticate.
     ├── bridge-history.jsonl
     ├── moderation.json
     ├── errors.jsonl
-    ├── scanner-matches.jsonl
-    ├── payloads.jsonl
+    ├── scanner-ips.json
     └── scanner-salt
 ```
 
-Scanner files:
-- `scanner-matches.jsonl` - detected IPs, endpoints, URLs and redacted credential metadata. Retained 48 hours.
-- `payloads.jsonl` - permanent, sanitized record of every decrypted payload. Sensitive values are replaced with `[REDACTED]` in place; structure, hosts, ports and usernames are preserved. Never pruned.
-- `scanner-salt` - per-install salt for credential fingerprints. Do not delete it if you rely on fingerprint comparisons across restarts.
+Scanner file:
+- `scanner-ips.json` - a JSON array containing only unique IPv4/IPv6 address strings. No URLs, ports, credentials, message text, sender/chat metadata, or decrypted payloads are saved. The file is persistent until `!scanner clear`.
 
 Run the scanner tests with: `npm test`
 
