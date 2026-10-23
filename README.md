@@ -155,8 +155,7 @@ Do not delete this directory unless you intentionally want to re-authenticate.
     ├── bridge-history.jsonl
     ├── moderation.json
     ├── errors.jsonl
-    ├── scanner-ips.json
-    └── scanner-salt
+    └── scanner-ips.json
 ```
 
 Scanner file:
