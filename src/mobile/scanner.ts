@@ -209,3 +209,23 @@ export function clearMatches(): void {
 export function scannerFile(): string {
   return FILE;
 }
+
+
+export function scannerFile(): string {
+  return FILE;
+}
+
+export function readMatches(limit = 50): string[] {
+  if (!fs.existsSync(FILE)) return [];
+  const parsed: unknown = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((item): item is string => typeof item === 'string')
+    .slice(-Math.max(0, limit))
+    .reverse();
+}
+
+export function clearMatches(): void {
+  ensure();
+  fs.writeFileSync(FILE, '[]\\n', { mode: 0o600 });
+}
