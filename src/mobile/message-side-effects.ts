@@ -123,46 +123,48 @@ export function createMessageSideEffects(
     text: string,
   ): boolean {
     const { chat, sender } = messageContext(M);
+
     // Messages sent by the bot must never be forwarded back to Discord.
-    // They still return false so owner-issued !commands can continue
-    // through the normal command router.
+    // Owner-issued commands can still continue through the command router.
     if (M?.key?.fromMe === true) {
       return false;
     }
 
     const isNewsletter =
-      String(M.key.remoteJid || '').endsWith('@newsletter');
+      String(M?.key?.remoteJid || '').endsWith('@newsletter');
 
     if (isNewsletter) {
-      /*
-       * Forward newsletter updates regardless of whether they contain
-       * conversation text. The forwarding call is detached, so Discord
-       * network latency can never hold up WhatsApp reception.
-       */
       const newsletterText =
         text.trim() ||
         `[Newsletter update] messageType=${Object.keys(message || {}).join(',') || 'unknown'}`;
-
-      void deps.discord.fromNewsletter(
-        sender,
+      const name =
         M.pushName ||
-          M.key.remoteJid ||
-          'Newsletter',
-        newsletterText,
-      ).catch(error => {
-        void deps.reportError(
-          'discord-newsletter',
-          error,
-        );
+        M.key.remoteJid ||
+        'Newsletter';
+
+      /*
+       * Defer even the initial Discord method invocation until the current
+       * WhatsApp handler has yielded. This keeps synchronous Discord-side
+       * work out of the WhatsApp message callback, not merely its network
+       * awaits.
+       */
+      setImmediate(() => {
+        void deps.discord.fromNewsletter(
+          sender,
+          name,
+          newsletterText,
+        ).catch(error => {
+          void deps.reportError(
+            'discord-newsletter',
+            error,
+          );
+        });
       });
 
       return true;
     }
 
-    if (
-      deps.discordTarget &&
-      chat === deps.discordTarget
-    ) {
+    if (deps.discordTarget && chat === deps.discordTarget) {
       const quoted =
         message.extendedTextMessage?.contextInfo
           ?.quotedMessage;
@@ -178,20 +180,27 @@ export function createMessageSideEffects(
         quotedText.trim()
           ? `↩️ Reply to: ${quotedText.slice(0, 700)}\n${text}`
           : text;
-
-      void deps.discord.fromWA(
+      const name = M.pushName || 'Unknown';
+      const messageId = M.key.id || undefined;
+      const fromMe = M.key.fromMe === true;
+      const waSender =
         M.key.participant ||
-          M.key.remoteJid ||
-          '',
-        M.pushName || 'Unknown',
-        discordText,
-        M.key.id || undefined,
-        M.key.fromMe === true,
-      ).catch(error => {
-        void deps.reportError(
-          'discord-bridge',
-          error,
-        );
+        M.key.remoteJid ||
+        '';
+
+      setImmediate(() => {
+        void deps.discord.fromWA(
+          waSender,
+          name,
+          discordText,
+          messageId,
+          fromMe,
+        ).catch(error => {
+          void deps.reportError(
+            'discord-bridge',
+            error,
+          );
+        });
       });
     }
 
