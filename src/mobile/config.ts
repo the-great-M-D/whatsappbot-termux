@@ -33,7 +33,7 @@ export const config = {
   tgApiId: process.env.TG_API_ID || '',
   tgApiHash: process.env.TG_API_HASH || '',
   tgSessionFile: process.env.TG_SESSION_FILE || '~/telegram/data/session.txt',
-  tgProcessorChat: process.env.TG_PROCESSOR_CHAT || process.env.TG_DOWNLOAD_BOT || '',
+  tgProcessorChat: process.env.TG_PROCESSOR_CHAT || '',
   tgMaxFileBytes: Number(process.env.TG_MAX_FILE_BYTES || 15728640),
   tgTimeoutMs: Number(process.env.TG_TIMEOUT_MS || 300000),
   ignoreOfflineMessages:
