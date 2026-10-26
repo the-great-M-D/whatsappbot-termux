@@ -13,6 +13,7 @@ export type CommandRouterDeps = {
   decryptEnabled: () => boolean;
   decryptLogFile: () => string;
   scanner: any;
+  telegramBridge: { processQuotedFile: (sock: any, M: any, commandReply: (content: any) => Promise<void>) => Promise<void> };
   discord: DiscordBridge;
   configCommand: (M: any, args: string[]) => Promise<any> | any;
   dev: (M: any, args: string[]) => Promise<any> | any;
@@ -151,6 +152,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                             `${config.prefix}help  — show commands`,
                             `${deps.config.prefix}hi    — bot online check`,
                             `${deps.config.prefix}sticker — convert replied .was to sticker`,
+                            `${deps.config.prefix}tg — send replied text file through Telegram and return cleaned text to sender`,
                             '',
                             '📡 SCANNER',
                             `${deps.config.prefix}scan`,
@@ -198,6 +200,20 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                     return;
                   }
       
+                  /*
+                   * !tg
+                   * Reply to a text document. Telegram returns the processed file;
+                   * the cleaned middle text is sent to the original sender.
+                   */
+                  if (command === 'tg') {
+                    await deps.telegramBridge.processQuotedFile(
+                      currentSock,
+                      M,
+                      commandReply,
+                    );
+                    return;
+                  }
+
                   /*
                    * !sticker
                    * Reply to a .was animation with this command.
