@@ -127,46 +127,46 @@ export function createTelegramTextBridge(deps: {
       }
 
       client.addEventHandler(async (event: any) => {
+        const message = event.message;
+        const transfer = pending;
+        if (!transfer || !message || message.out) return;
         try {
-          const message = event.message;
-          if (!pending || !message || message.out || !message.media) return;
-
-          const media = message.media as any;
-          if (!media.document) return;
-
-          const transfer = pending;
-          pending = null;
-          clearTimeout(transfer.timeout);
-
-          const downloaded = await client!.downloadMedia(message);
-          if (!downloaded) throw new Error('Telegram returned a document but its contents could not be downloaded.');
-          const buffer = Buffer.isBuffer(downloaded) ? downloaded : Buffer.from(downloaded as any);
-          if (buffer.length > maxBytes) {
-            console.error('[TG] Returned file rejected: size=' + buffer.length + ' limit=' + maxBytes);
-            await transfer.sock.sendMessage(transfer.senderJid, {
-              text: 'Telegram returned a file larger than the configured limit (' + maxBytes + ' bytes).',
-            });
+          let responseText = '';
+          if (typeof message.message === 'string' && message.message.trim()) {
+            responseText = message.message;
+          } else if (message.media && (message.media as any).document) {
+            const downloaded = await client!.downloadMedia(message);
+            if (!downloaded) throw new Error('Telegram returned a document but its contents could not be downloaded.');
+            const buffer = Buffer.isBuffer(downloaded) ? downloaded : Buffer.from(downloaded as any);
+            if (buffer.length > maxBytes) throw new Error('Telegram response exceeds TG_MAX_FILE_BYTES (' + maxBytes + ' bytes).');
+            try {
+              responseText = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+            } catch {
+              throw new Error('Telegram returned a binary file. The response must be text or a text file.');
+            }
+            if (responseText.includes('\\u0000')) throw new Error('Telegram returned a binary file. The response must be text or a text file.');
+          } else {
             return;
           }
 
-          let text: string;
-          try {
-            text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
-          } catch {
-            throw new Error('Telegram returned a file that is not valid UTF-8 text.');
-          }
-          if (text.includes('\u0000')) throw new Error('Telegram returned a binary file, not a text file.');
-
-          const cleaned = cleanReturnedText(text);
+          pending = null;
+          clearTimeout(transfer.timeout);
+          const cleaned = cleanReturnedText(responseText);
           if (!cleaned.trim()) throw new Error('No text remained after removing the configured header and footer.');
-
           await transfer.sock.sendMessage(transfer.senderJid, { text: cleaned });
-          console.log('[TG] Cleaned text delivered to original sender; bytes=' + Buffer.byteLength(cleaned, 'utf8'));
+          console.log('[TG] Cleaned text response delivered to original sender; chars=' + cleaned.length);
         } catch (error) {
-          console.error('[TG] Returned-file processing failed:', error instanceof Error ? error.message : String(error));
+          pending = null;
+          clearTimeout(transfer.timeout);
+          console.error('[TG] Returned-response processing failed:', error instanceof Error ? error.message : String(error));
+          try {
+            await transfer.sock.sendMessage(transfer.senderJid, {
+              text: 'Telegram response could not be cleaned: ' + (error instanceof Error ? error.message : String(error)),
+            });
+          } catch {}
           void deps.reportError('telegram-return-file', error);
         }
-      }, new NewMessage({ chats: [processorChat] }));
+      } new NewMessage({ chats: [processorChat] }));
 
       ready = true;
       console.log('[TG] Connected. Processor chat=' + processorChat);
@@ -194,14 +194,16 @@ export function createTelegramTextBridge(deps: {
       || message?.imageMessage?.contextInfo
       || message?.documentMessage?.contextInfo;
     const quoted = unwrapMessage(context?.quotedMessage);
-    const document = quoted?.documentMessage;
+    const fileTypes = ['documentMessage', 'imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage'];
+    const quotedType = fileTypes.find(type => quoted?.[type]);
+    const filePayload = quotedType ? quoted[quotedType] : null;
 
-    if (!document) {
-      await commandReply({ text: 'Reply to a WhatsApp text file with !tg. The file can have any extension, but its contents must be UTF-8 text.' });
+    if (!filePayload || !quotedType) {
+      await commandReply({ text: 'Reply to any WhatsApp file or media attachment with !tg. The Telegram response must be plain text or a text file.' });
       return;
     }
 
-    const advertisedSize = Number(document.fileLength || 0);
+    const advertisedSize = Number(filePayload.fileLength || 0);
     if (advertisedSize > maxBytes) {
       console.error('[TG] Input file rejected before download: size=' + advertisedSize + ' limit=' + maxBytes);
       await commandReply({ text: 'File exceeds the configured TG_MAX_FILE_BYTES limit (' + maxBytes + ' bytes).' });
@@ -215,14 +217,16 @@ export function createTelegramTextBridge(deps: {
       return;
     }
 
-    const mimeType = String(document.mimetype || 'text/plain');
-    const fileName = String(document.fileName || 'telegram-input.txt').replace(/[\\/\0]/g, '_').slice(0, 180) || 'telegram-input.txt';
+    const mimeType = String(filePayload.mimetype || 'application/octet-stream');
+    const extension = ({ documentMessage: 'bin', imageMessage: 'jpg', videoMessage: 'mp4', audioMessage: 'ogg', stickerMessage: 'webp' } as Record<string, string>)[quotedType] || 'bin';
+    const fileName = String(filePayload.fileName || ('whatsapp-input.' + extension)).replace(/[\\/\0]/g, '_').slice(0, 180) || 'whatsapp-input.bin';
 
     await commandReply({ text: 'Sending file to Telegram for processing. I will send the cleaned text to the original sender when the returned file arrives.' });
 
     let buffer: Buffer;
     try {
-      const stream = await downloadContentFromMessage(document, 'document');
+      const downloadType = quotedType.replace('Message', '') as 'document' | 'image' | 'video' | 'audio' | 'sticker';
+      const stream = await downloadContentFromMessage(filePayload, downloadType);
       buffer = await streamToBuffer(stream as AsyncIterable<Uint8Array>);
     } catch (error) {
       await commandReply({ text: 'Could not download the replied-to file: ' + (error instanceof Error ? error.message : String(error)) });
@@ -253,7 +257,7 @@ export function createTelegramTextBridge(deps: {
     try {
       await client.sendFile(deps.config.tgProcessorChat, {
         file: new CustomFile(fileName, buffer.length, '', buffer),
-        caption: 'Process this as a UTF-8 text file. Return the edited text file. Do not send the cleaned text as a chat message.',
+        caption: 'Process this uploaded file regardless of its format. Return the response as plain text in a Telegram message or as a text file. The WhatsApp bot will remove the specified header/footer from the response text.',
         forceDocument: true,
         workers: 1,
       });
