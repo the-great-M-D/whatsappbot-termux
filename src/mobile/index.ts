@@ -39,6 +39,7 @@ import { createStickerService } from './sticker.js';
 import { createCommandRouter } from './command-router.js';
 import { createWhatsAppMessageHandler } from './message-handler.js';
 import { createConnectionManager } from './connection-manager.js';
+import { createTelegramTextBridge } from './telegram-text-bridge.js';
 
 const sleep = (ms: number) =>
   new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -267,6 +268,8 @@ const sticker = createStickerService({
   reportError,
 });
 
+const telegramBridge = createTelegramTextBridge({ config, reportError });
+
 const sideEffects = createMessageSideEffects({
   scanAndNotify: scanner.scanAndNotify,
   discord,
@@ -285,6 +288,7 @@ const commandRouter = createCommandRouter({
   decrypt,
   sticker,
   scanner,
+  telegramBridge,
   discord,
   configCommand,
   dev,
@@ -381,6 +385,12 @@ async function startup() {
   );
 
   console.log('');
+
+  // Telegram is optional and must never block WhatsApp startup.
+  void telegramBridge.start().catch(error => {
+    console.error(chalk.red('[TG] Startup failed; WhatsApp will continue.'), errorText(error));
+    void reportError('telegram-start', error);
+  });
 
   await connectionManager!.connect();
 }
