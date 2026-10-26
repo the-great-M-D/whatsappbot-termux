@@ -14,7 +14,8 @@
     "@whiskeysockets/baileys": "7.0.0-rc13",
     "chalk": "^5.6.2",
     "discord.js": "^14.27.0",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "telegram": "^2.26.22"
   },
   "devDependencies": {
     "@types/node": "^20.10.6",
