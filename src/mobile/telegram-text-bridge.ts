@@ -144,7 +144,7 @@ export function createTelegramTextBridge(deps: {
             } catch {
               throw new Error('Telegram returned a binary file. The response must be text or a text file.');
             }
-            if (responseText.includes('\\u0000')) throw new Error('Telegram returned a binary file. The response must be text or a text file.');
+            if (responseText.includes('\u0000')) throw new Error('Telegram returned a binary file. The response must be text or a text file.');
           } else {
             return;
           }
@@ -166,7 +166,7 @@ export function createTelegramTextBridge(deps: {
           } catch {}
           void deps.reportError('telegram-return-file', error);
         }
-      } new NewMessage({ chats: [processorChat] }));
+      }, new NewMessage({ chats: [processorChat] }));
 
       ready = true;
       console.log('[TG] Connected. Processor chat=' + processorChat);
