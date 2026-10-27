@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { TelegramClient } from 'telegram';
-import { StringSession } from 'telegram/sessions';
-import { NewMessage } from 'telegram/events';
+import { StringSession } from 'telegram/sessions/index.js';
+import { NewMessage } from 'telegram/events/index.js';
 import { CustomFile } from 'telegram/client/uploads.js';
 
 type PendingTransfer = {
@@ -34,25 +34,35 @@ function unwrapMessage(message: any): any {
 }
 
 function cleanReturnedText(input: string) {
-  const lines = input.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
+  const lines = input
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n');
 
-  while (lines.length && !lines[0].trim()) lines.shift();
-  if (lines[0]?.trim() === 'HABIBI HA TUNNEL SCRIPT') {
-    lines.shift();
-    while (lines.length && !lines[0].trim()) lines.shift();
-    if (lines[0] && /^=+\s*$/.test(lines[0])) lines.shift();
+  // Locate separator lines consisting only of repeated equals signs.
+  const separators: number[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*={10,}\s*$/.test(lines[i])) {
+      separators.push(i);
+    }
   }
 
-  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-  if (lines[lines.length - 1]?.trim() === 'code : @HABIBI_1ST') {
-    lines.pop();
-    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-    if (lines.length && /^=+\s*$/.test(lines[lines.length - 1])) lines.pop();
+  if (separators.length >= 2) {
+    // Keep only the text between the first two separators.
+    return lines
+      .slice(separators[0] + 1, separators[1])
+      .join('\n')
+      .trim();
   }
 
-  while (lines.length && !lines[0].trim()) lines.shift();
-  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-  return lines.join('\n');
+  // Fallback for responses with only one separator.
+  if (separators.length === 1) {
+    return lines.slice(separators[0] + 1).join('\n').trim();
+  }
+
+  // No separator found: leave the response intact rather than deleting content.
+  return lines.join('\n').trim();
 }
 
 async function streamToBuffer(stream: AsyncIterable<Uint8Array>) {
@@ -118,8 +128,8 @@ export function createTelegramTextBridge(deps: {
     try {
       const sessionString = fs.readFileSync(sessionFile, 'utf8').trim();
       client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, {
-        connectionRetries: 0,
-        autoReconnect: false,
+        connectionRetries: 5,
+        autoReconnect: true,
       });
       await client.connect();
       if (!(await client.checkAuthorization())) {
@@ -129,41 +139,130 @@ export function createTelegramTextBridge(deps: {
       client.addEventHandler(async (event: any) => {
         const message = event.message;
         const transfer = pending;
-        if (!transfer || !message || message.out) return;
+        if (!message) return;
+
+        const isDocument = Boolean(message.media && (message.media as any).document);
+        const text = typeof message.message === 'string' ? message.message.trim() : '';
+
+        console.log(
+          '[TG] Processor update:',
+          'chatId=' + String(message.chatId ?? 'unknown'),
+          'out=' + String(message.out),
+          'document=' + String(isDocument),
+          'textChars=' + String(text.length),
+          'pending=' + String(Boolean(transfer))
+        );
+
+        if (!transfer || message.out) return;
+
+        // Never silently discard short processor responses: they may contain errors.
+        // Forward the response to WhatsApp. Keep waiting for the result document
+        // for ordinary status messages, but finish the transfer on an error response.
+        if (!isDocument && text.length > 0 && text.length < 80) {
+          console.log('[TG] Short processor response:', text);
+
+          const looksLikeError =
+            /\\b(error|failed|WRONG|PASSWORD|HWID|failure|invalid|exception|denied|rejected|unsupported|unable|cannot|could not|timed out|timeout)\\b/i.test(text);
+
+          try {
+            const botJid = String(transfer.sock?.user?.id || '').replace(/:\d+@/, '@');
+            if (!botJid) {
+              console.error('[TG] Cannot forward status: bot WhatsApp JID unavailable.');
+            } else {
+              await transfer.sock.sendMessage(botJid, {
+                text: '[MD Tool] ' + text,
+              });
+            }
+            console.log('[TG] Short processor response forwarded to WhatsApp.');
+
+            if (looksLikeError) {
+              if (pending === transfer) pending = null;
+              clearTimeout(transfer.timeout);
+              console.error('[TG] Processor error received; transfer closed.');
+            } else {
+              console.log('[TG] Status forwarded; still waiting for result document.');
+            }
+          } catch (error) {
+            console.error(
+              '[TG] Could not forward short processor response:',
+              error instanceof Error ? error.message : String(error)
+            );
+          }
+
+          return;
+        }
+
+        if (!isDocument && !text) {
+          console.log('[TG] Empty non-document update; waiting for result document.');
+          return;
+        }
+
         try {
           let responseText = '';
-          if (typeof message.message === 'string' && message.message.trim()) {
-            responseText = message.message;
-          } else if (message.media && (message.media as any).document) {
+
+          if (isDocument) {
             const downloaded = await client!.downloadMedia(message);
-            if (!downloaded) throw new Error('Telegram returned a document but its contents could not be downloaded.');
-            const buffer = Buffer.isBuffer(downloaded) ? downloaded : Buffer.from(downloaded as any);
-            if (buffer.length > maxBytes) throw new Error('Telegram response exceeds TG_MAX_FILE_BYTES (' + maxBytes + ' bytes).');
+            if (!downloaded) {
+              throw new Error('Telegram returned a document but its contents could not be downloaded.');
+            }
+
+            const buffer = Buffer.isBuffer(downloaded)
+              ? downloaded
+              : Buffer.from(downloaded as any);
+
+            if (buffer.length > maxBytes) {
+              throw new Error('Telegram response exceeds TG_MAX_FILE_BYTES (' + maxBytes + ' bytes).');
+            }
+
             try {
               responseText = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
             } catch {
               throw new Error('Telegram returned a binary file. The response must be text or a text file.');
             }
-            if (responseText.includes('\u0000')) throw new Error('Telegram returned a binary file. The response must be text or a text file.');
+
+            if (responseText.includes('\u0000')) {
+              throw new Error('Telegram returned a binary file. The response must be text or a text file.');
+            }
           } else {
-            return;
+            responseText = text;
           }
 
-          pending = null;
-          clearTimeout(transfer.timeout);
           const cleaned = cleanReturnedText(responseText);
-          if (!cleaned.trim()) throw new Error('No text remained after removing the configured header and footer.');
-          await transfer.sock.sendMessage(transfer.senderJid, { text: cleaned });
+          if (!cleaned.trim()) {
+            throw new Error('No text remained after removing the configured header and footer.');
+          }
+
+          // Clear only after a usable response has been extracted.
+          if (pending === transfer) pending = null;
+          clearTimeout(transfer.timeout);
+
+          await transfer.sock.sendMessage(
+            transfer.originalChatJid,
+            { text: 'ℹ️ M_D TOOL\n━━━━━━━━━━━━━━━━\n' + cleaned },
+            { quoted: transfer.originalMessage }
+          );
           console.log('[TG] Cleaned text response delivered to original sender; chars=' + cleaned.length);
         } catch (error) {
-          pending = null;
+          if (pending === transfer) pending = null;
           clearTimeout(transfer.timeout);
-          console.error('[TG] Returned-response processing failed:', error instanceof Error ? error.message : String(error));
+
+          console.error(
+            '[TG] Returned-response processing failed:',
+            error instanceof Error ? error.message : String(error)
+          );
+
           try {
             await transfer.sock.sendMessage(transfer.senderJid, {
-              text: 'Telegram response could not be cleaned: ' + (error instanceof Error ? error.message : String(error)),
+              text: 'Telegram response could not be processed: ' +
+                (error instanceof Error ? error.message : String(error)),
             });
-          } catch {}
+          } catch (sendError) {
+            console.error(
+              '[TG] Could not notify WhatsApp sender:',
+              sendError instanceof Error ? sendError.message : String(sendError)
+            );
+          }
+
           void deps.reportError('telegram-return-file', error);
         }
       }, new NewMessage({ chats: [processorChat] }));
@@ -179,7 +278,12 @@ export function createTelegramTextBridge(deps: {
     }
   }
 
-  async function processQuotedFile(sock: any, commandMessage: any, commandReply: (content: any) => Promise<void>) {
+  async function processQuotedFile(
+    sock: any,
+    commandMessage: any,
+    commandReply: (content: any) => Promise<void>,
+    textInput = '',
+  ) {
     if (!deps.config.tgEnabled || !ready || !client) {
       await commandReply({ text: 'Telegram file processor is unavailable. Check TELEGRAM_ENABLED and the Telegram startup log.' });
       return;
@@ -189,17 +293,117 @@ export function createTelegramTextBridge(deps: {
       return;
     }
 
+    const inputText = textInput.trim();
+
+    // Resolve the quoted message first. Media always takes priority over text.
     const message = unwrapMessage(commandMessage?.message);
     const context = message?.extendedTextMessage?.contextInfo
       || message?.imageMessage?.contextInfo
-      || message?.documentMessage?.contextInfo;
+      || message?.videoMessage?.contextInfo
+      || message?.audioMessage?.contextInfo
+      || message?.documentMessage?.contextInfo
+      || message?.stickerMessage?.contextInfo;
+
     const quoted = unwrapMessage(context?.quotedMessage);
-    const fileTypes = ['documentMessage', 'imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage'];
+    const fileTypes = [
+      'documentMessage',
+      'imageMessage',
+      'videoMessage',
+      'audioMessage',
+      'stickerMessage',
+    ];
     const quotedType = fileTypes.find(type => quoted?.[type]);
     const filePayload = quotedType ? quoted[quotedType] : null;
 
+    // Only send text directly when no supported file is being quoted.
+    if (inputText && !filePayload) {
+      const chatJid = String(commandMessage?.key?.remoteJid || '');
+      const senderJid = String(
+        commandMessage?.key?.participant || chatJid
+      );
+
+      if (!chatJid || !senderJid) {
+        await commandReply({ text: 'Could not identify the WhatsApp sender.' });
+        return;
+      }
+
+      const transfer: PendingTransfer = {
+        sock,
+        senderJid,
+        originalChatJid: chatJid,
+        originalMessage: commandMessage,
+        timeout: setTimeout(() => {
+          if (pending === transfer) {
+            pending = null;
+            console.error('[TG] Timed out waiting for text-input result.');
+            void deps.reportError(
+              'telegram-timeout',
+              new Error('No returned result received before TG_TIMEOUT_MS expired.')
+            );
+          }
+        }, timeoutMs),
+      };
+
+      pending = transfer;
+
+      try {
+        await commandReply({
+          text: 'Sending your text  for processing. Waiting for the result...',
+        });
+
+        await client.sendMessage(deps.config.tgProcessorChat, {
+          message: inputText,
+        });
+
+        console.log('[TG] Text sent to processor; chars=' + inputText.length);
+      } catch (error) {
+        if (pending === transfer) pending = null;
+        clearTimeout(transfer.timeout);
+
+        console.error(
+          '[TG] Failed to send text to Telegram:',
+          error instanceof Error ? error.message : String(error)
+        );
+
+        await commandReply({
+          text: 'Failed to send text to Telegram: ' +
+            (error instanceof Error ? error.message : String(error)),
+        });
+
+        void deps.reportError('telegram-send-text', error);
+      }
+
+      return;
+    }
+
+    // If !tg has no typed text and the quoted message is plain text,
+    // forward that quoted text through the existing Telegram text flow.
+    if (!filePayload && quoted) {
+      const quotedText = String(
+        quoted.conversation
+        || quoted.extendedTextMessage?.text
+        || quoted.imageMessage?.caption
+        || quoted.videoMessage?.caption
+        || quoted.documentMessage?.caption
+        || quoted.audioMessage?.caption
+        || ''
+      ).trim();
+
+      if (quotedText) {
+        await processQuotedFile(
+          sock,
+          commandMessage,
+          commandReply,
+          quotedText,
+        );
+        return;
+      }
+    }
+
     if (!filePayload || !quotedType) {
-      await commandReply({ text: 'Reply to any WhatsApp file or media attachment with !tg. The Telegram response must be plain text or a text file.' });
+      await commandReply({
+        text: 'Use !tg your text, or reply to a WhatsApp text message or file with !tg.',
+      });
       return;
     }
 
@@ -221,7 +425,7 @@ export function createTelegramTextBridge(deps: {
     const extension = ({ documentMessage: 'bin', imageMessage: 'jpg', videoMessage: 'mp4', audioMessage: 'ogg', stickerMessage: 'webp' } as Record<string, string>)[quotedType] || 'bin';
     const fileName = String(filePayload.fileName || ('whatsapp-input.' + extension)).replace(/[\\/\0]/g, '_').slice(0, 180) || 'whatsapp-input.bin';
 
-    await commandReply({ text: 'Sending file to Telegram for processing. I will send the cleaned text to the original sender when the returned file arrives.' });
+   // await commandReply({ text: '' });
 
     let buffer: Buffer;
     try {
@@ -241,7 +445,7 @@ export function createTelegramTextBridge(deps: {
 
     const transfer: PendingTransfer = {
       sock,
-      senderJid: context?.participant ? senderJid : originalChatJid,
+      senderJid: originalChatJid,
       originalChatJid,
       originalMessage: commandMessage,
       timeout: setTimeout(() => {
@@ -257,11 +461,14 @@ export function createTelegramTextBridge(deps: {
     try {
       await client.sendFile(deps.config.tgProcessorChat, {
         file: new CustomFile(fileName, buffer.length, '', buffer),
-        caption: 'Process this uploaded file regardless of its format. Return the response as plain text in a Telegram message or as a text file. The WhatsApp bot will remove the specified header/footer from the response text.',
+        caption: inputText || undefined,
         forceDocument: true,
         workers: 1,
       });
-      console.log('[TG] Input file sent to processor; name=' + fileName + ' bytes=' + buffer.length + ' mime=' + mimeType);
+      console.log(
+        '[TG] Original file sent' + (inputText ? ' with instruction caption' : ' without caption') +
+        '; name=' + fileName + ' bytes=' + buffer.length + ' mime=' + mimeType
+      );
     } catch (error) {
       if (pending === transfer) pending = null;
       clearTimeout(transfer.timeout);
