@@ -29,6 +29,13 @@ export const config = {
   allowedScripts: csv(process.env.DEV_ALLOWED_SCRIPTS),
   shellTimeout: Number(process.env.DEV_TIMEOUT_MS || 15000),
   maxOutput: Number(process.env.DEV_MAX_OUTPUT || 12000),
+  tgEnabled: String(process.env.TELEGRAM_ENABLED || 'false').toLowerCase() === 'true',
+  tgApiId: process.env.TG_API_ID || '',
+  tgApiHash: process.env.TG_API_HASH || '',
+  tgSessionFile: process.env.TG_SESSION_FILE || '~/telegram/data/session.txt',
+  tgProcessorChat: process.env.TG_PROCESSOR_CHAT || '',
+  tgMaxFileBytes: Number(process.env.TG_MAX_FILE_BYTES || 15728640),
+  tgTimeoutMs: Number(process.env.TG_TIMEOUT_MS || 300000),
   ignoreOfflineMessages:
     String(process.env.IGNORE_OFFLINE_MESSAGES || 'true').toLowerCase() !== 'false'
 };

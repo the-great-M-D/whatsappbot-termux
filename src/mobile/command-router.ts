@@ -13,6 +13,8 @@ export type CommandRouterDeps = {
   decryptEnabled: () => boolean;
   decryptLogFile: () => string;
   scanner: any;
+  outreachQueue: any;
+  telegramBridge: { processQuotedFile: (sock: any, M: any, commandReply: (content: any) => Promise<void>, textInput?: string) => Promise<void> };
   discord: DiscordBridge;
   configCommand: (M: any, args: string[]) => Promise<any> | any;
   dev: (M: any, args: string[]) => Promise<any> | any;
@@ -151,6 +153,7 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                             `${config.prefix}help  — show commands`,
                             `${deps.config.prefix}hi    — bot online check`,
                             `${deps.config.prefix}sticker — convert replied .was to sticker`,
+                            `${deps.config.prefix}tg [text] — process text or a replied-to file through Telegram`,
                             '',
                             '📡 SCANNER',
                             `${deps.config.prefix}scan`,
@@ -198,6 +201,62 @@ export function createCommandRouter(deps: CommandRouterDeps) {
                     return;
                   }
       
+                  /*
+                   * !outreach — owner-only manual outreach controls.
+                   */
+                  if (command === 'outreach') {
+                    const action = (args[0] || 'status').toLowerCase();
+                    let output: string;
+
+                    try {
+                      if (action === 'queue') {
+                        const page = Number(args[1] || 1);
+                        output = deps.outreachQueue.readQueue(page);
+                      } else if (action === 'dedupe') {
+                        output = deps.outreachQueue.dedupe();
+                      } else if (action === 'status') {
+                        output = deps.outreachQueue.status();
+                      } else if (action === 'send') {
+                        output = deps.outreachQueue.send();
+                      } else if (action === 'stop') {
+                        output = deps.outreachQueue.stop();
+                      } else if (action === 'resume') {
+                        output = deps.outreachQueue.resume();
+                      } else {
+                        output = [
+                          'OUTREACH COMMANDS',
+                          `${config.prefix}outreach queue [page] — read queued messages`,
+                          `${config.prefix}outreach dedupe — quarantine duplicate jobs`,
+                          `${config.prefix}outreach status — queue status`,
+                          `${config.prefix}outreach send — send reviewed jobs`,
+                          `${config.prefix}outreach stop — emergency pause`,
+                          `${config.prefix}outreach resume — clear stop, keep paused`,
+                        ].join('\n');
+                      }
+                    } catch (err) {
+                      output = `Outreach command failed: ${err instanceof Error ? err.message : String(err)}`;
+                      await deps.reportError('outreach-command', err);
+                    }
+
+                    await commandReply({ text: output });
+                    return;
+                  }
+
+                  /*
+                   * !tg
+                   * Reply to a text document. Telegram returns the processed file;
+                   * the cleaned middle text is sent to the original sender.
+                   */
+                  if (command === 'tg') {
+                    await deps.telegramBridge.processQuotedFile(
+                      currentSock,
+                      M,
+                      commandReply,
+                      args.join(' '),
+                    );
+                    return;
+                  }
+
                   /*
                    * !sticker
                    * Reply to a .was animation with this command.
